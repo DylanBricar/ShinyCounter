@@ -1,0 +1,18 @@
+/target
+Cargo.lock.bak
+*.swp
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# Dev helper scripts kept out of distribution
+screenshot.ps1
+wipe_config.ps1
+click_reset.ps1
+check_accent.ps1
+test_http.ps1
+
+# Temporary screenshot output (assets/screenshot.png is committed; this is for
+# scratch captures at the repo root only).
+/screenshot.png

@@ -1,0 +1,323 @@
+name: "Release"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.create-release.outputs.result }}
+      version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: get-version
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const tags = releases
+              .map(r => r.tag_name)
+              .filter(t => /^v\d+\.\d+\.\d+$/.test(t))
+              .sort((a, b) => {
+                const pa = a.slice(1).split('.').map(Number);
+                const pb = b.slice(1).split('.').map(Number);
+                return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+              });
+            let next;
+            if (tags.length === 0) {
+              next = '0.1.0';
+            } else {
+              const latest = tags[tags.length - 1].slice(1).split('.').map(Number);
+              latest[2] += 1;
+              next = latest.join('.');
+            }
+            core.info(`Next version: ${next}`);
+            core.setOutput('version', next);
+            core.setOutput('tag', `v${next}`);
+            return next;
+
+      - name: Generate changelog
+        id: changelog
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const version = '${{ steps.get-version.outputs.version }}';
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 5,
+            });
+            const prevTag = releases.find(r => !r.draft)?.tag_name || '';
+            let commits = [];
+            if (prevTag) {
+              const { data: comparison } = await github.rest.repos.compareCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                base: prevTag,
+                head: 'main',
+              });
+              commits = comparison.commits.map(c => c.commit.message.split('\n')[0]);
+            }
+            const groups = {
+              'Features': [],
+              'Bug Fixes': [],
+              'Improvements': [],
+              'CI / Build': [],
+              'Other': [],
+            };
+            for (const msg of commits) {
+              if (msg.startsWith('feat')) groups['Features'].push(msg);
+              else if (msg.startsWith('fix')) groups['Bug Fixes'].push(msg);
+              else if (msg.startsWith('refactor') || msg.startsWith('perf') || msg.startsWith('chore')) groups['Improvements'].push(msg);
+              else if (msg.startsWith('ci') || msg.startsWith('build')) groups['CI / Build'].push(msg);
+              else if (!msg.toLowerCase().startsWith('merge')) groups['Other'].push(msg);
+            }
+            let body = `## What's new in v${version}\n\n`;
+            for (const [title, items] of Object.entries(groups)) {
+              if (items.length === 0) continue;
+              body += `### ${title}\n`;
+              for (const item of items) {
+                const clean = item.replace(/^(feat|fix|refactor|perf|chore|ci|build)(\(.*?\))?:\s*/, '');
+                body += `- ${clean}\n`;
+              }
+              body += '\n';
+            }
+            if (prevTag) {
+              body += `**Full Changelog**: https://github.com/${{ github.repository }}/compare/${prevTag}...v${version}\n`;
+            }
+            return body;
+
+      - name: Create Draft Release
+        id: create-release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ steps.get-version.outputs.version }}
+          RELEASE_BODY: ${{ steps.changelog.outputs.result }}
+        with:
+          script: |
+            const version = process.env.RELEASE_VERSION;
+            const body = process.env.RELEASE_BODY;
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${version}`,
+              name: `Shiny Counter v${version}`,
+              body,
+              draft: true,
+              prerelease: false,
+              target_commitish: context.sha,
+            });
+            return data.id;
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_glob: "target/x86_64-unknown-linux-gnu/release/shiny_counter"
+            asset_name: "ShinyCounter-${VERSION}-linux-x86_64.tar.gz"
+            archive_kind: tar
+          - name: linux-aarch64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_glob: "target/aarch64-unknown-linux-gnu/release/shiny_counter"
+            asset_name: "ShinyCounter-${VERSION}-linux-aarch64.tar.gz"
+            archive_kind: tar
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_glob: "target/x86_64-pc-windows-msvc/release/shiny_counter.exe"
+            asset_name: "ShinyCounter-${VERSION}-windows-x86_64.zip"
+            archive_kind: zip
+          - name: macos-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+            artifact_glob: "target/aarch64-apple-darwin/release/shiny_counter"
+            asset_name: "ShinyCounter-${VERSION}-macos-aarch64.dmg"
+            archive_kind: macapp
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact_glob: "target/x86_64-apple-darwin/release/shiny_counter"
+            asset_name: "ShinyCounter-${VERSION}-macos-x86_64.dmg"
+            archive_kind: macapp
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libudev-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            libxcb1-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libwayland-dev
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage artifact (Unix tarball)
+        if: matrix.archive_kind == 'tar'
+        shell: bash
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          SRC: ${{ matrix.artifact_glob }}
+          OUT: ${{ matrix.asset_name }}
+        run: |
+          set -eux
+          OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
+          STAGE_DIR="ShinyCounter-$VERSION"
+          mkdir -p "$STAGE_DIR"
+          cp "$SRC" "$STAGE_DIR/shiny_counter"
+          cp README.md "$STAGE_DIR/" 2>/dev/null || true
+          cp LICENSE "$STAGE_DIR/" 2>/dev/null || true
+          chmod +x "$STAGE_DIR/shiny_counter"
+          tar -czf "$OUT_NAME" "$STAGE_DIR"
+          echo "ASSET_PATH=$OUT_NAME" >> "$GITHUB_ENV"
+          echo "ASSET_NAME=$OUT_NAME" >> "$GITHUB_ENV"
+
+      - name: Stage artifact (Windows zip)
+        if: matrix.archive_kind == 'zip'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          SRC: ${{ matrix.artifact_glob }}
+          OUT: ${{ matrix.asset_name }}
+        run: |
+          $version = $env:VERSION
+          $outName = $env:OUT.Replace('${VERSION}', $version)
+          $stageDir = "ShinyCounter-$version"
+          New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+          Copy-Item $env:SRC -Destination "$stageDir/ShinyCounter.exe"
+          if (Test-Path "README.md") { Copy-Item README.md $stageDir }
+          if (Test-Path "LICENSE") { Copy-Item LICENSE $stageDir }
+          Compress-Archive -Path $stageDir -DestinationPath $outName -Force
+          "ASSET_PATH=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ASSET_NAME=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Stage artifact (macOS .app + .dmg)
+        if: matrix.archive_kind == 'macapp'
+        shell: bash
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          SRC: ${{ matrix.artifact_glob }}
+          OUT: ${{ matrix.asset_name }}
+        run: |
+          set -eux
+          OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
+          APP_DIR="ShinyCounter.app"
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+          cp "$SRC" "$APP_DIR/Contents/MacOS/shiny_counter"
+          chmod +x "$APP_DIR/Contents/MacOS/shiny_counter"
+          cat > "$APP_DIR/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Shiny Counter</string>
+            <key>CFBundleDisplayName</key><string>Shiny Counter</string>
+            <key>CFBundleIdentifier</key><string>app.shinycounter</string>
+            <key>CFBundleVersion</key><string>$VERSION</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundleExecutable</key><string>shiny_counter</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.13</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSAppleEventsUsageDescription</key><string>Required to capture pixels from other windows.</string>
+            <key>NSScreenCaptureUsageDescription</key><string>Shiny Counter samples on-screen colours to detect Pokémon encounters.</string>
+          </dict>
+          </plist>
+          EOF
+          # Build a basic .dmg containing the .app
+          DMG_STAGE="dmg-stage"
+          mkdir -p "$DMG_STAGE"
+          cp -R "$APP_DIR" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications" || true
+          hdiutil create -volname "Shiny Counter" -srcfolder "$DMG_STAGE" \
+            -ov -format UDZO "$OUT_NAME"
+          echo "ASSET_PATH=$OUT_NAME" >> "$GITHUB_ENV"
+          echo "ASSET_NAME=$OUT_NAME" >> "$GITHUB_ENV"
+
+      - name: Upload asset to release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.ASSET_PATH;
+            const name = process.env.ASSET_NAME;
+            const data = fs.readFileSync(path);
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release-id }},
+              name,
+              data,
+            });
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release-id }},
+              draft: false,
+            });
