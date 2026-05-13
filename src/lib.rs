@@ -5,3 +5,4 @@ pub mod os_accent;
 pub mod server;
 pub mod storage;
 pub mod types;
+pub mod update;

@@ -185,6 +185,10 @@ pub struct Config {
     pub language: Lang,
     #[serde(default)]
     pub _monitor_index_legacy: Option<usize>,
+    /// When true, a newer release on GitHub is opened in the browser without
+    /// prompting. When false (default), the user gets a modal first.
+    #[serde(default)]
+    pub auto_download_updates: bool,
 }
 
 impl Default for Config {
@@ -198,6 +202,7 @@ impl Default for Config {
             log: Vec::new(),
             language: Lang::default(),
             _monitor_index_legacy: None,
+            auto_download_updates: false,
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::theme::{
-    self, card, colored_button, ghost_button, icon_button, paint_pokeball, pill, pill_dot, ACCENT,
-    BAD, BG, BORDER, GOOD, SHINY, SURFACE, SURFACE_2, TEXT, TEXT_DIM, WARN,
+    self, card, colored_button, ghost_button, icon_button, info_icon, paint_pokeball, pill,
+    pill_dot, ACCENT, BAD, BG, BORDER, GOOD, SHINY, SURFACE, SURFACE_2, TEXT, TEXT_DIM, WARN,
 };
 use shiny_counter::capture::{capture, list_sources, sample_color, SourceInfo};
 use shiny_counter::counter::{CounterEvent, CounterState};
@@ -12,6 +12,7 @@ use shiny_counter::types::{
     CaptureSource, Color, Config, HitRecord, LogEntry, PickerPoint, Preset, SessionRecord,
     MAX_PICKERS, MIN_PICKERS,
 };
+use shiny_counter::update::{self, UpdateChannel, UpdateStatus};
 
 use eframe::egui;
 use image::RgbaImage;
@@ -72,6 +73,9 @@ pub struct ShinyApp {
     journal_page: usize,
     expanded_sessions: HashSet<usize>,
     session_pages: HashMap<usize, usize>,
+    update_channel: UpdateChannel,
+    update_prompt_dismissed_for: Option<String>,
+    update_auto_opened_for: Option<String>,
 }
 
 impl ShinyApp {
@@ -104,7 +108,12 @@ impl ShinyApp {
             journal_page: 0,
             expanded_sessions: HashSet::new(),
             session_pages: HashMap::new(),
+            update_channel: UpdateChannel::new(),
+            update_prompt_dismissed_for: None,
+            update_auto_opened_for: None,
         };
+        // Fire and forget a one-shot release check on launch.
+        update::spawn_check(app.update_channel.clone());
         // Close any leftover open sessions from a previous run.
         for p in &mut app.config.presets {
             if let Some(last) = p.sessions.last_mut() {
@@ -441,6 +450,7 @@ impl eframe::App for ShinyApp {
             }
         }
         self.render_confirm_modal(ctx);
+        self.render_update_modal(ctx);
         self.flush_save();
     }
 
@@ -610,6 +620,7 @@ impl ShinyApp {
                             .color(TEXT_DIM)
                             .small(),
                     );
+                    info_icon(ui, self.s().info_accent);
                     let current = self.accent();
                     let mut rgb = [
                         current.r as f32 / 255.0,
@@ -633,6 +644,46 @@ impl ShinyApp {
                     if ghost_button(ui, self.s().refresh).clicked() {
                         self.sources = list_sources();
                         self.sources_refreshed_at = Instant::now();
+                    }
+                });
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    let mut auto = self.config.auto_download_updates;
+                    if ui
+                        .checkbox(&mut auto, self.s().update_auto_download)
+                        .changed()
+                    {
+                        self.config.auto_download_updates = auto;
+                        self.mark_dirty();
+                    }
+                    info_icon(ui, self.s().info_auto_update);
+                    ui.separator();
+                    if ghost_button(ui, self.s().update_check).clicked() {
+                        update::spawn_check(self.update_channel.clone());
+                    }
+                    match self.update_channel.status() {
+                        UpdateStatus::Checking => {
+                            ui.label(
+                                egui::RichText::new(self.s().update_checking)
+                                    .color(TEXT_DIM)
+                                    .small(),
+                            );
+                        }
+                        UpdateStatus::UpToDate { current } => {
+                            pill(
+                                ui,
+                                &format!("{} (v{current})", self.s().update_uptodate),
+                                GOOD,
+                                GOOD,
+                            );
+                        }
+                        UpdateStatus::Available(info) => {
+                            pill(ui, &format!("v{}", info.latest_version), SHINY, SHINY);
+                        }
+                        UpdateStatus::Error(e) => {
+                            ui.colored_label(BAD, format!("{}: {e}", self.s().update_error));
+                        }
+                        UpdateStatus::Idle => {}
                     }
                 });
             }
@@ -699,11 +750,15 @@ impl ShinyApp {
                 );
                 ui.add_space(4.0);
                 ui.vertical_centered(|ui| {
-                    if self.counter.is_armed() {
-                        pill_dot(ui, self.s().armed, GOOD, GOOD);
-                    } else {
-                        pill_dot(ui, self.s().locked, WARN, WARN);
-                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space((ui.available_width() - 110.0).max(0.0) * 0.5);
+                        if self.counter.is_armed() {
+                            pill_dot(ui, self.s().armed, GOOD, GOOD);
+                        } else {
+                            pill_dot(ui, self.s().locked, WARN, WARN);
+                        }
+                        info_icon(ui, self.s().info_armed);
+                    });
                 });
             });
 
@@ -792,6 +847,7 @@ impl ShinyApp {
                 if colored_button(ui, self.s().pick_on_screen, acc, acc).clicked() {
                     self.begin_pick(ctx);
                 }
+                info_icon(ui, self.s().info_pick);
                 let can_add = self.active().pickers.len() < MAX_PICKERS;
                 ui.add_enabled_ui(can_add, |ui| {
                     if ghost_button(ui, self.s().add_slot).clicked() {
@@ -806,6 +862,7 @@ impl ShinyApp {
             // Source selector — placed right under Pick controls so it stays visible.
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(self.s().source).color(TEXT_DIM).small());
+                info_icon(ui, self.s().info_source);
                 self.render_source_combo(ui);
             });
 
@@ -997,6 +1054,7 @@ impl ShinyApp {
                         .color(TEXT_DIM)
                         .small(),
                 );
+                info_icon(ui, self.s().info_interval);
                 let mut interval = self.active().interval_ms as i64;
                 if ui
                     .add(
@@ -1016,6 +1074,7 @@ impl ShinyApp {
                         .color(TEXT_DIM)
                         .small(),
                 );
+                info_icon(ui, self.s().info_tolerance);
                 let mut tol = self.active().tolerance as i32;
                 if ui
                     .add(
@@ -1058,6 +1117,7 @@ impl ShinyApp {
                         .color(TEXT_DIM)
                         .small(),
                 );
+                info_icon(ui, self.s().info_obs_overlay);
                 let mut enabled = self.config.server_enabled;
                 if ui.checkbox(&mut enabled, self.s().live_http).changed() {
                     self.config.server_enabled = enabled;
@@ -1248,6 +1308,7 @@ impl ShinyApp {
             let lang = self.config.language;
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(self.s().history).size(15.0).strong());
+                info_icon(ui, self.s().info_session);
                 let sess_word = pluralize(lang, n_sessions, self.s().session, self.s().sessions);
                 let hit_word =
                     pluralize(lang, total_hits, self.s().hit_singular, self.s().hit_plural);
@@ -1609,6 +1670,109 @@ impl ShinyApp {
                 PendingConfirm::None => {}
             }
             self.pending_confirm = PendingConfirm::None;
+        }
+    }
+
+    fn render_update_modal(&mut self, ctx: &egui::Context) {
+        let status = self.update_channel.status();
+        let info = match status {
+            UpdateStatus::Available(info) => info,
+            _ => return,
+        };
+
+        // Auto-open path: if the user toggled the auto-download setting, open the
+        // GitHub release page exactly once for this version then exit silently.
+        if self.config.auto_download_updates
+            && self.update_auto_opened_for.as_deref() != Some(&info.latest_version)
+        {
+            update::open_release_page(&info);
+            self.update_auto_opened_for = Some(info.latest_version.clone());
+            return;
+        }
+
+        if self.update_prompt_dismissed_for.as_deref() == Some(&info.latest_version) {
+            return;
+        }
+
+        // Backdrop
+        let backdrop_id = egui::Id::new("update_backdrop");
+        egui::Area::new(backdrop_id)
+            .order(egui::Order::Middle)
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .interactable(true)
+            .show(ctx, |ui| {
+                let screen_rect = ctx.screen_rect();
+                ui.painter()
+                    .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
+                ui.allocate_response(screen_rect.size(), egui::Sense::click_and_drag());
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.update_prompt_dismissed_for = Some(info.latest_version.clone());
+            return;
+        }
+
+        let mut do_open = false;
+        let mut dismissed = false;
+        let title = self.s().update_available_title;
+        let body = self.s().update_available_msg;
+        let body_versions = format!("{}  →  v{}", info.current_version, info.latest_version);
+        let release_name = info.release_name.clone();
+        let acc = self.accent32();
+        egui::Window::new(title)
+            .id(egui::Id::new("update_modal_window"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .auto_sized()
+            .frame(
+                egui::Frame::none()
+                    .fill(SURFACE)
+                    .stroke(egui::Stroke::new(1.0, BORDER))
+                    .rounding(egui::Rounding::same(14.0))
+                    .inner_margin(egui::Margin::same(20.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 32.0,
+                        spread: 0.0,
+                        color: egui::Color32::from_black_alpha(180),
+                    }),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.label(egui::RichText::new(title).size(17.0).strong().color(TEXT));
+                ui.add_space(6.0);
+                pill(ui, &release_name, SHINY, SHINY);
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(body).color(TEXT_DIM).size(13.5));
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(body_versions)
+                        .color(TEXT_DIM)
+                        .monospace()
+                        .small(),
+                );
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if colored_button(ui, self.s().update_open, acc, acc).clicked() {
+                            do_open = true;
+                        }
+                        ui.add_space(8.0);
+                        if ghost_button(ui, self.s().update_later).clicked() {
+                            dismissed = true;
+                        }
+                    });
+                });
+            });
+
+        if do_open {
+            update::open_release_page(&info);
+            self.update_prompt_dismissed_for = Some(info.latest_version);
+        } else if dismissed {
+            self.update_prompt_dismissed_for = Some(info.latest_version);
         }
     }
 

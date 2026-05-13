@@ -275,6 +275,29 @@ pub fn icon_button(ui: &mut egui::Ui, glyph: &str, fg: egui::Color32) -> egui::R
     resp
 }
 
+/// Render a small "ⓘ" / `?` info bubble that shows a tooltip on hover.
+pub fn info_icon(ui: &mut egui::Ui, tip: &str) {
+    let size = egui::vec2(18.0, 18.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    let hovered = response.hovered();
+    let bg = if hovered {
+        ACCENT
+    } else {
+        egui::Color32::from_rgb(70, 78, 110)
+    };
+    painter.circle_filled(rect.center(), 8.5, bg.linear_multiply(0.55));
+    painter.circle_stroke(rect.center(), 8.5, egui::Stroke::new(1.0, bg));
+    painter.text(
+        rect.center() + egui::vec2(0.0, 0.5),
+        egui::Align2::CENTER_CENTER,
+        "i",
+        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        egui::Color32::WHITE,
+    );
+    response.on_hover_text(tip);
+}
+
 /// Draw a stylised Pokéball at the given center.
 pub fn paint_pokeball(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
     use std::f32::consts::PI;

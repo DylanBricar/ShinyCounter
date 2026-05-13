@@ -116,6 +116,24 @@ pub struct Strings {
     pub confirm_delete_picker_msg: &'static str,
     pub clear_history: &'static str,
     pub time_to: &'static str,
+    pub update_check: &'static str,
+    pub update_checking: &'static str,
+    pub update_uptodate: &'static str,
+    pub update_available_title: &'static str,
+    pub update_available_msg: &'static str,
+    pub update_open: &'static str,
+    pub update_later: &'static str,
+    pub update_auto_download: &'static str,
+    pub update_error: &'static str,
+    pub info_obs_overlay: &'static str,
+    pub info_tolerance: &'static str,
+    pub info_interval: &'static str,
+    pub info_source: &'static str,
+    pub info_accent: &'static str,
+    pub info_armed: &'static str,
+    pub info_session: &'static str,
+    pub info_pick: &'static str,
+    pub info_auto_update: &'static str,
 }
 
 const FR: Strings = Strings {
@@ -215,6 +233,34 @@ const FR: Strings = Strings {
     confirm_delete_picker_title: "Supprimer cette pipette ?",
     confirm_delete_picker_msg: "La position et la couleur cible de cette pipette seront effacées.",
     time_to: "à",
+    update_check: "Vérifier les mises à jour",
+    update_checking: "Vérification…",
+    update_uptodate: "À jour",
+    update_available_title: "Mise à jour disponible",
+    update_available_msg:
+        "Une nouvelle version de Shiny Counter est disponible. Tu peux ouvrir la page GitHub pour télécharger l'installeur correspondant à ton système.",
+    update_open: "Ouvrir GitHub",
+    update_later: "Plus tard",
+    update_auto_download: "Télécharger automatiquement les mises à jour",
+    update_error: "Échec de la vérification",
+    info_obs_overlay:
+        "Petit serveur HTTP local (127.0.0.1) qui sert le compteur. Ajoute http://127.0.0.1:7878/ comme Browser Source dans OBS pour afficher le numéro sur ton stream — la page se rafraîchit toute seule 4×/seconde.",
+    info_tolerance:
+        "Tolérance ±RVB pour le matching pixel. ±0 = correspondance exacte, ±20 (défaut) = bon compromis pour les streams compressés, ±50+ pour les vidéos très bruitées.",
+    info_interval:
+        "Intervalle entre deux échantillonnages (en millisecondes). 100 ms = 10 lectures/seconde, suffisant pour la plupart des jeux. Augmente si tu utilises beaucoup de CPU.",
+    info_source:
+        "Choisis l'écran à surveiller, ou directement une fenêtre — la capture par fenêtre fonctionne même si la fenêtre est cachée derrière une autre (utile pour les émulateurs en arrière-plan).",
+    info_accent:
+        "Couleur d'accent du préréglage. Par défaut, on prend celle du système d'exploitation. Tu peux la personnaliser par préréglage pour repérer rapidement la chasse active.",
+    info_armed:
+        "ARMÉ = le compteur peut s'incrémenter au prochain match. VERROUILLÉ = en attente que toutes les pipettes voient une couleur différente avant de pouvoir compter à nouveau. Évite les doublons sur un écran qui ne change pas.",
+    info_session:
+        "Une session débute quand tu cliques sur « Démarrer la surveillance » et se termine au stop. Chaque hit (rencontre détectée) est rattaché à la session en cours.",
+    info_pick:
+        "Capture un screenshot de la source choisie, puis clique 3 fois dessus pour placer les pipettes. Chaque clic enregistre la couleur du pixel ciblé comme cible à matcher.",
+    info_auto_update:
+        "Si activé, Shiny Counter ouvre directement la page GitHub d'une nouvelle release dès qu'elle est disponible, sans demander confirmation.",
 };
 
 const EN: Strings = Strings {
@@ -314,6 +360,34 @@ const EN: Strings = Strings {
     confirm_delete_picker_title: "Delete this picker?",
     confirm_delete_picker_msg: "The position and target color of this picker will be erased.",
     time_to: "to",
+    update_check: "Check for updates",
+    update_checking: "Checking…",
+    update_uptodate: "Up to date",
+    update_available_title: "Update available",
+    update_available_msg:
+        "A new version of Shiny Counter is available. Open the GitHub release page to download the installer for your platform.",
+    update_open: "Open GitHub",
+    update_later: "Later",
+    update_auto_download: "Open new releases automatically",
+    update_error: "Update check failed",
+    info_obs_overlay:
+        "Tiny local HTTP server (127.0.0.1) serving the counter. Add http://127.0.0.1:7878/ as an OBS Browser Source — the page polls itself 4 times per second so the number updates live.",
+    info_tolerance:
+        "RGB tolerance for pixel matching. ±0 = exact match, ±20 (default) is a good fit for compressed streams, ±50+ for noisy footage.",
+    info_interval:
+        "Sampling cadence in milliseconds. 100 ms = 10 reads/second, enough for most games. Raise it if CPU usage is a concern.",
+    info_source:
+        "Pick a monitor to watch, or a specific window — window capture keeps working even if the window is hidden behind another (useful for background emulators).",
+    info_accent:
+        "Preset accent color. Defaults to the OS accent. Override it per preset to spot the current hunt at a glance.",
+    info_armed:
+        "ARMED = the counter can fire on the next match. LOCKED = waiting for all pickers to read a different color before it can count again. Prevents double-counts on a static encounter screen.",
+    info_session:
+        "A session opens when you press “Start watching” and closes on stop. Every hit (detected encounter) belongs to the active session.",
+    info_pick:
+        "Captures a screenshot of the chosen source, then prompts you to click 3 spots. Each click records that pixel's color as a target to match.",
+    info_auto_update:
+        "When enabled, Shiny Counter opens the GitHub release page automatically as soon as a new version is detected, with no prompt.",
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {

@@ -76,12 +76,24 @@ fn handle_request(req: tiny_http::Request, state: &Arc<Mutex<OverlayState>>) {
     }
     let url = req.url().split('?').next().unwrap_or("/").to_string();
     match url.as_str() {
-        "/" | "/count" | "/count.txt" | "/index.html" => {
+        "/count" | "/count.txt" => {
             let snapshot = state.lock().clone();
             let body = format!("{}", snapshot.count);
             let resp = Response::from_string(body)
                 .with_header(text_header())
-                .with_header(cors_header());
+                .with_header(cors_header())
+                .with_header(no_cache_header());
+            let _ = req.respond(resp);
+        }
+        "/" | "/index.html" => {
+            // HTML page that polls /count.txt 4× per second so OBS browser
+            // sources update without a manual refresh. Transparent background,
+            // single span — the user can layer custom CSS via OBS if they want.
+            let html = OVERLAY_HTML;
+            let resp = Response::from_string(html)
+                .with_header(html_header())
+                .with_header(cors_header())
+                .with_header(no_cache_header());
             let _ = req.respond(resp);
         }
         _ => {
@@ -90,12 +102,77 @@ fn handle_request(req: tiny_http::Request, state: &Arc<Mutex<OverlayState>>) {
     }
 }
 
+const OVERLAY_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Shiny Counter</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: #ffffff;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "tnum" 1;
+  }
+  #count {
+    display: inline-block;
+    padding: 12px 20px;
+    font-size: 96px;
+    font-weight: 700;
+    line-height: 1;
+    text-shadow: 0 0 6px rgba(0,0,0,0.55);
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+<span id="count">0</span>
+<script>
+  // Pure JS polling — no external deps. Works inside any OBS Browser source
+  // (Chromium embedded), tested with default settings.
+  (function () {
+    const el = document.getElementById('count');
+    let last = null;
+    async function tick() {
+      try {
+        const r = await fetch('/count.txt', { cache: 'no-store' });
+        if (!r.ok) return;
+        const v = (await r.text()).trim();
+        if (v !== last) {
+          el.textContent = v;
+          last = v;
+        }
+      } catch (_) {
+        /* network blip, retry next tick */
+      }
+    }
+    tick();
+    setInterval(tick, 250);
+  })();
+</script>
+</body>
+</html>"#;
+
 fn text_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"text/plain; charset=utf-8"[..]).unwrap()
 }
 
+fn html_header() -> Header {
+    Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
+}
+
 fn cors_header() -> Header {
     Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap()
+}
+
+fn no_cache_header() -> Header {
+    Header::from_bytes(
+        &b"Cache-Control"[..],
+        &b"no-store, no-cache, must-revalidate"[..],
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -112,10 +189,19 @@ mod tests {
         srv.update(42, "Test Preset".to_string(), true);
         std::thread::sleep(Duration::from_millis(50));
 
-        let resp = ureq_get(&format!("http://127.0.0.1:{port}/"));
+        let resp = ureq_get(&format!("http://127.0.0.1:{port}/count"));
         if let Some(body) = resp {
             let last_line = body.lines().last().unwrap_or("").trim();
             assert_eq!(last_line, "42", "expected plain int body, got: {body:?}");
+        }
+
+        // Also verify the overlay HTML endpoint exists and references /count.txt
+        let html = ureq_get(&format!("http://127.0.0.1:{port}/"));
+        if let Some(body) = html {
+            assert!(
+                body.contains("/count.txt"),
+                "overlay HTML should poll /count.txt, got: {body:?}"
+            );
         }
     }
 
