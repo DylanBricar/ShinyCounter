@@ -158,8 +158,12 @@ jobs:
             artifact_glob: "target/aarch64-apple-darwin/release/shiny_counter"
             asset_name: "ShinyCounter-${VERSION}-macos-aarch64.dmg"
             archive_kind: macapp
+          # Intel macOS is cross-compiled from an Apple Silicon runner — the
+          # dedicated `macos-13` (Intel) image is being phased out and its
+          # queue can stall jobs for 10+ minutes. macOS ships a universal
+          # toolchain so this Just Works.
           - name: macos-x86_64
-            os: macos-13
+            os: macos-14
             target: x86_64-apple-darwin
             artifact_glob: "target/x86_64-apple-darwin/release/shiny_counter"
             asset_name: "ShinyCounter-${VERSION}-macos-x86_64.dmg"
