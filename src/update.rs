@@ -71,8 +71,16 @@ impl UpdateChannel {
     }
 }
 
-/// Spawn a thread that asks GitHub for the latest release once.
+/// Spawn a thread that asks GitHub for the latest release once. A second
+/// call while a check is already in flight is dropped silently to keep us
+/// well under GitHub's anonymous rate limit (60 req/hour/IP).
 pub fn spawn_check(channel: UpdateChannel) {
+    if matches!(
+        channel.status(),
+        UpdateStatus::Checking | UpdateStatus::Downloading { .. }
+    ) {
+        return;
+    }
     channel.set(UpdateStatus::Checking);
     let _ = thread::Builder::new()
         .name("shiny-counter-update".into())
@@ -84,7 +92,16 @@ pub fn spawn_check(channel: UpdateChannel) {
 
 /// Spawn a thread that streams the platform-matching asset to the user's
 /// Downloads folder, reporting percentage progress as it goes.
+///
+/// A second concurrent call while another download is already in flight is
+/// silently ignored — the existing worker keeps going.
 pub fn spawn_download(channel: UpdateChannel, info: UpdateInfo) {
+    if matches!(
+        channel.status(),
+        UpdateStatus::Downloading { .. } | UpdateStatus::Downloaded { .. }
+    ) {
+        return;
+    }
     channel.set(UpdateStatus::Downloading {
         info: info.clone(),
         percent: 0,
@@ -279,13 +296,29 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
     Ok(target_path)
 }
 
-/// Open a downloaded file using the OS default handler.
+/// Open a downloaded file with the OS default handler.
+///
+/// On Windows we directly spawn an `.exe` instead of routing through
+/// `cmd /C start` to avoid any chance of shell interpretation of the path.
+/// For anything else (or non-`.exe` paths, future-proofing) we fall back to
+/// the `start` shell built-in. macOS uses `open`, Linux uses `xdg-open`.
 pub fn open_path(path: &Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path.to_string_lossy()])
-            .spawn()?;
+        let is_exe = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case("exe"))
+            .unwrap_or(false);
+        if is_exe {
+            std::process::Command::new(path).spawn()?;
+        } else {
+            // No shell parsing — every argument is passed straight through
+            // to CreateProcess, with Rust quoting any embedded whitespace.
+            std::process::Command::new("explorer.exe")
+                .arg(path)
+                .spawn()?;
+        }
     }
     #[cfg(target_os = "macos")]
     {

@@ -250,15 +250,25 @@ impl ShinyApp {
     }
 
     fn write_output_file(&mut self) {
-        let preset = self.active();
-        if !preset.output_file_enabled {
+        // Snapshot the values we need under an immutable borrow, then release
+        // it so the status update below can take a mutable borrow if needed.
+        let (enabled, path, count) = {
+            let preset = self.active();
+            (
+                preset.output_file_enabled,
+                preset.output_file.clone(),
+                preset.count,
+            )
+        };
+        if !enabled {
             return;
         }
-        let Some(path) = preset.output_file.as_ref() else {
+        let Some(path) = path else {
             return;
         };
-        let content = format!("{}", preset.count);
-        let path = path.clone();
+        // Trailing newline so naive line-oriented readers (some OBS variants,
+        // tail -f, etc.) treat the file as a complete record.
+        let content = format!("{count}\n");
         if let Err(e) = write_atomic(&path, content.as_bytes()) {
             self.status = format!("{}: {e}", self.s().file_output_error);
         }
