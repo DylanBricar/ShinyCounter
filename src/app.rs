@@ -76,6 +76,11 @@ pub struct ShinyApp {
     update_channel: UpdateChannel,
     update_prompt_dismissed_for: Option<String>,
     update_auto_opened_for: Option<String>,
+    /// Set to `true` when an auto-download was kicked off (setting enabled).
+    /// Used to suppress the "Downloading…" modal so the operation stays
+    /// invisible until the asset is fully on disk — at which point we pop
+    /// the "Download complete" modal once.
+    update_auto_initiated: bool,
 }
 
 impl ShinyApp {
@@ -111,6 +116,7 @@ impl ShinyApp {
             update_channel: UpdateChannel::new(),
             update_prompt_dismissed_for: None,
             update_auto_opened_for: None,
+            update_auto_initiated: false,
         };
         // Fire and forget a one-shot release check on launch.
         update::spawn_check(app.update_channel.clone());
@@ -1852,9 +1858,20 @@ impl ShinyApp {
                 && self.update_auto_opened_for.as_deref() != Some(&info.latest_version)
             {
                 self.update_auto_opened_for = Some(info.latest_version.clone());
+                self.update_auto_initiated = true;
                 update::spawn_download(self.update_channel.clone(), info.clone());
                 return;
             }
+        }
+
+        // While an auto-download is streaming, stay silent — the user opted
+        // in to "do it for me", so a progress modal would be intrusive. The
+        // Settings pill keeps showing the percentage. The modal will reopen
+        // automatically once the status transitions to `Downloaded`.
+        if self.update_auto_initiated
+            && matches!(&status, UpdateStatus::Downloading { .. })
+        {
+            return;
         }
 
         if self.update_prompt_dismissed_for.as_deref() == Some(&version) {
@@ -2049,13 +2066,16 @@ impl ShinyApp {
             let _ = update::open_path(&path);
             self.snooze_version(&version);
             self.update_channel.set(UpdateStatus::Idle);
+            self.update_auto_initiated = false;
         }
         if action_snooze {
             self.snooze_version(&version);
             self.update_channel.set(UpdateStatus::Idle);
+            self.update_auto_initiated = false;
         }
         if action_close {
             self.update_channel.set(UpdateStatus::Idle);
+            self.update_auto_initiated = false;
         }
     }
 

@@ -3532,7 +3532,7 @@ dependencies = [
 
 [[package]]
 name = "shiny_counter"
-version = "0.1.3"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "dirs",
