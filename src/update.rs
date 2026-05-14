@@ -209,7 +209,11 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
     let dir = dirs::download_dir()
         .or_else(dirs::cache_dir)
         .unwrap_or_else(std::env::temp_dir);
-    let path = dir.join(&asset.name);
+    let target_path = dir.join(&asset.name);
+    // Write to a `.partial` sidecar so a stale or locked target file can't
+    // wedge the download. We rename atomically on success.
+    let tmp_path = dir.join(format!("{}.partial", &asset.name));
+    let _ = std::fs::remove_file(&tmp_path);
 
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(10))
@@ -223,8 +227,8 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
         .with_context(|| format!("GET {}", asset.url))?;
 
     let mut reader = response.into_reader();
-    let mut file =
-        std::fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
+    let mut file = std::fs::File::create(&tmp_path)
+        .with_context(|| format!("creating {}", tmp_path.display()))?;
     let mut buf = vec![0u8; 64 * 1024];
     let total = asset.size.max(1);
     let mut downloaded: u64 = 0;
@@ -243,8 +247,36 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
         }
     }
     file.flush()?;
+    drop(file);
     on_progress(100);
-    Ok(path)
+    // Replace any existing copy. If the destination is locked (e.g. the user
+    // is currently running it), keep the `.partial` file with a numeric
+    // suffix so the download isn't lost.
+    let _ = std::fs::remove_file(&target_path);
+    if let Err(_e) = std::fs::rename(&tmp_path, &target_path) {
+        // Fallback: timestamped name in the same directory.
+        let stem = target_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("shiny-counter-update");
+        let ext = target_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let alt = if ext.is_empty() {
+            target_path.with_file_name(format!("{stem}-{stamp}"))
+        } else {
+            target_path.with_file_name(format!("{stem}-{stamp}.{ext}"))
+        };
+        std::fs::rename(&tmp_path, &alt)
+            .with_context(|| format!("renaming partial to {}", alt.display()))?;
+        return Ok(alt);
+    }
+    Ok(target_path)
 }
 
 /// Open a downloaded file using the OS default handler.
