@@ -9,6 +9,15 @@ on:
 permissions:
   contents: write
 
+# Serialize release runs so the second one waits for the first to finish.
+# Without this, two concurrent workflows can both create drafts, race on the
+# tag bump, or — worse — have one's "clean up stale drafts" step delete the
+# release the other is still uploading assets to, which surfaces as a
+# 404 Not Found during the asset upload step.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -29,32 +38,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Clean up stale draft releases
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Drafts from previous failed runs are useless and pollute the
-            // Releases tab. Wipe them all before creating a new one.
-            const { data: releases } = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 100,
-            });
-            for (const r of releases) {
-              if (r.draft) {
-                core.info(`Deleting stale draft ${r.tag_name} (id ${r.id})`);
-                try {
-                  await github.rest.repos.deleteRelease({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    release_id: r.id,
-                  });
-                } catch (e) {
-                  core.warning(`Failed to delete draft ${r.id}: ${e.message}`);
-                }
-              }
-            }
 
       - name: Compute next version from existing git tags
         id: get-version
@@ -335,14 +318,42 @@ jobs:
           VERSION: ${{ needs.create-release.outputs.version }}
           SRC: ${{ matrix.artifact_glob }}
           OUT: ${{ matrix.asset_name }}
+          TARGET: ${{ matrix.target }}
         run: |
-          set -eux
+          set -euxo pipefail
           OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
           APP_DIR="ShinyCounter.app"
           mkdir -p "$APP_DIR/Contents/MacOS"
           mkdir -p "$APP_DIR/Contents/Resources"
           cp "$SRC" "$APP_DIR/Contents/MacOS/shiny_counter"
           chmod +x "$APP_DIR/Contents/MacOS/shiny_counter"
+
+          # ---- Pokéball iconset → icon.icns -----------------------------------
+          # The build script wrote a 1024×1024 PNG into OUT_DIR. The path is
+          # target/<triple>/release/build/shiny_counter-<hash>/out/icon-1024.png
+          ICON_SRC=$(find "target/$TARGET/release/build" -name 'icon-1024.png' | head -1)
+          if [ -n "$ICON_SRC" ] && [ -f "$ICON_SRC" ]; then
+            ICONSET="ShinyCounter.iconset"
+            rm -rf "$ICONSET"
+            mkdir "$ICONSET"
+            sips -z 16   16   "$ICON_SRC" --out "$ICONSET/icon_16x16.png"
+            sips -z 32   32   "$ICON_SRC" --out "$ICONSET/icon_16x16@2x.png"
+            sips -z 32   32   "$ICON_SRC" --out "$ICONSET/icon_32x32.png"
+            sips -z 64   64   "$ICON_SRC" --out "$ICONSET/icon_32x32@2x.png"
+            sips -z 128  128  "$ICON_SRC" --out "$ICONSET/icon_128x128.png"
+            sips -z 256  256  "$ICON_SRC" --out "$ICONSET/icon_128x128@2x.png"
+            sips -z 256  256  "$ICON_SRC" --out "$ICONSET/icon_256x256.png"
+            sips -z 512  512  "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png"
+            sips -z 512  512  "$ICON_SRC" --out "$ICONSET/icon_512x512.png"
+            cp "$ICON_SRC"                       "$ICONSET/icon_512x512@2x.png"
+            iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/icon.icns"
+            rm -rf "$ICONSET"
+            ICON_PLIST="<key>CFBundleIconFile</key><string>icon</string>"
+          else
+            echo "No icon-1024.png found — bundle will use the system default."
+            ICON_PLIST=""
+          fi
+
           cat > "$APP_DIR/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -359,11 +370,14 @@ jobs:
             <key>NSHighResolutionCapable</key><true/>
             <key>NSAppleEventsUsageDescription</key><string>Required to capture pixels from other windows.</string>
             <key>NSScreenCaptureUsageDescription</key><string>Shiny Counter samples on-screen colours to detect Pokémon encounters.</string>
+            $ICON_PLIST
           </dict>
           </plist>
           EOF
+
           # Build a basic .dmg containing the .app
           DMG_STAGE="dmg-stage"
+          rm -rf "$DMG_STAGE"
           mkdir -p "$DMG_STAGE"
           cp -R "$APP_DIR" "$DMG_STAGE/"
           ln -s /Applications "$DMG_STAGE/Applications" || true

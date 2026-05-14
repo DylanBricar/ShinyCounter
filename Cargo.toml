@@ -34,6 +34,13 @@ webbrowser = "1.0"
 semver = "1.0"
 rfd = { version = "0.15", default-features = false, features = ["gtk3", "common-controls-v6"] }
 
+[build-dependencies]
+ico = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 proptest = "1"
 
