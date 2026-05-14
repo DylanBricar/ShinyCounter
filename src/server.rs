@@ -7,11 +7,23 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use tiny_http::{Header, Method, Response, Server};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OverlayState {
     pub count: u32,
     pub preset: String,
     pub armed: bool,
+    pub styled: bool,
+}
+
+impl Default for OverlayState {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            preset: String::new(),
+            armed: true,
+            styled: true,
+        }
+    }
 }
 
 pub struct CounterServer {
@@ -42,11 +54,12 @@ impl CounterServer {
         })
     }
 
-    pub fn update(&self, count: u32, preset: String, armed: bool) {
+    pub fn update(&self, count: u32, preset: String, armed: bool, styled: bool) {
         let mut s = self.state.lock();
         s.count = count;
         s.preset = preset;
         s.armed = armed;
+        s.styled = styled;
     }
 }
 
@@ -86,14 +99,22 @@ fn handle_request(req: tiny_http::Request, state: &Arc<Mutex<OverlayState>>) {
             let _ = req.respond(resp);
         }
         "/" | "/index.html" => {
-            // HTML page that polls /count.txt 4× per second so OBS browser
-            // sources update without a manual refresh. Transparent background,
-            // single span — the user can layer custom CSS via OBS if they want.
-            let html = OVERLAY_HTML;
-            let resp = Response::from_string(html)
-                .with_header(html_header())
-                .with_header(cors_header())
-                .with_header(no_cache_header());
+            let styled = state.lock().styled;
+            let resp = if styled {
+                Response::from_string(OVERLAY_HTML_STYLED)
+                    .with_header(html_header())
+                    .with_header(cors_header())
+                    .with_header(no_cache_header())
+            } else {
+                // No CSS, no JS — just the raw integer. OBS Text Source over
+                // file is the recommended path for this mode, but the URL
+                // still works for any plain-text consumer.
+                let snapshot = state.lock().clone();
+                Response::from_string(format!("{}", snapshot.count))
+                    .with_header(text_header())
+                    .with_header(cors_header())
+                    .with_header(no_cache_header())
+            };
             let _ = req.respond(resp);
         }
         _ => {
@@ -102,7 +123,7 @@ fn handle_request(req: tiny_http::Request, state: &Arc<Mutex<OverlayState>>) {
     }
 }
 
-const OVERLAY_HTML: &str = r#"<!doctype html>
+const OVERLAY_HTML_STYLED: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -186,7 +207,7 @@ mod tests {
             Ok(s) => s,
             Err(_) => return,
         };
-        srv.update(42, "Test Preset".to_string(), true);
+        srv.update(42, "Test Preset".to_string(), true, true);
         std::thread::sleep(Duration::from_millis(50));
 
         let resp = ureq_get(&format!("http://127.0.0.1:{port}/count"));

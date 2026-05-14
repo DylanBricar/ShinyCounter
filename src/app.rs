@@ -237,7 +237,30 @@ impl ShinyApp {
         }
 
         if let Some(s) = &self.server {
-            s.update(count, self.active().name.clone(), self.counter.is_armed());
+            s.update(
+                count,
+                self.active().name.clone(),
+                self.counter.is_armed(),
+                self.config.server_styled,
+            );
+        }
+        if matches!(evt, CounterEvent::Incremented) {
+            self.write_output_file();
+        }
+    }
+
+    fn write_output_file(&mut self) {
+        let preset = self.active();
+        if !preset.output_file_enabled {
+            return;
+        }
+        let Some(path) = preset.output_file.as_ref() else {
+            return;
+        };
+        let content = format!("{}", preset.count);
+        let path = path.clone();
+        if let Err(e) = write_atomic(&path, content.as_bytes()) {
+            self.status = format!("{}: {e}", self.s().file_output_error);
         }
     }
 
@@ -335,6 +358,7 @@ impl ShinyApp {
                     self.active().count,
                     self.active().name.clone(),
                     self.counter.is_armed(),
+                    self.config.server_styled,
                 );
                 self.server = Some(s);
             }
@@ -822,6 +846,7 @@ impl ShinyApp {
                     let c = self.active().count.saturating_sub(1);
                     self.active_mut().count = c;
                     self.mark_dirty();
+                    self.write_output_file();
                 }
                 if ui
                     .add_sized([bw, 36.0], egui::Button::new("+1").rounding(10.0))
@@ -829,6 +854,7 @@ impl ShinyApp {
                 {
                     self.active_mut().count = self.active().count.saturating_add(1);
                     self.mark_dirty();
+                    self.write_output_file();
                 }
                 if ui
                     .add_sized([bw, 36.0], egui::Button::new(self.s().reset).rounding(10.0))
@@ -1133,13 +1159,14 @@ impl ShinyApp {
 
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    egui::RichText::new(self.s().obs_overlay)
-                        .color(TEXT_DIM)
-                        .small(),
+                    egui::RichText::new(self.s().server_label)
+                        .color(TEXT)
+                        .strong(),
                 );
+                ui.add_space(6.0);
                 info_icon(ui, self.s().info_obs_overlay);
                 let mut enabled = self.config.server_enabled;
-                if ui.checkbox(&mut enabled, self.s().live_http).changed() {
+                if ui.checkbox(&mut enabled, "").changed() {
                     self.config.server_enabled = enabled;
                     self.mark_dirty();
                 }
@@ -1161,22 +1188,109 @@ impl ShinyApp {
                         }
                     }
                 }
-                if self.config.server_enabled {
-                    let acc = self.accent32();
-                    pill(
-                        ui,
-                        &format!("http://127.0.0.1:{}/", self.config.server_port),
-                        acc,
-                        acc,
+                let mut styled = self.config.server_styled;
+                if ui.checkbox(&mut styled, self.s().server_styled).changed() {
+                    self.config.server_styled = styled;
+                    self.mark_dirty();
+                }
+                info_icon(ui, self.s().info_server_style);
+            });
+            if self.config.server_enabled {
+                ui.add_space(4.0);
+                let url = format!("http://127.0.0.1:{}/", self.config.server_port);
+                ui.horizontal_wrapped(|ui| {
+                    let mut url_mut = url.clone();
+                    // Copy-pasteable read-only text. The user can select all
+                    // and Ctrl+C, or click the dedicated button below.
+                    ui.add(
+                        egui::TextEdit::singleline(&mut url_mut)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(240.0)
+                            .margin(egui::Margin::symmetric(10.0, 10.0)),
                     );
+                    if ghost_button(ui, self.s().copy).clicked() {
+                        ui.ctx().copy_text(url.clone());
+                        self.status = format!("{}: {}", self.s().copied, url);
+                    }
                     ui.label(
                         egui::RichText::new(self.s().add_as_obs_source)
                             .color(TEXT_DIM)
                             .small(),
                     );
+                });
+            }
+            if let Some(err) = &self.server_error {
+                ui.colored_label(BAD, format!("({err})"));
+            }
+
+            ui.add_space(8.0);
+
+            // File output row: lets the user point an OBS Text-from-File
+            // source (or any external reader) at a path we keep in sync.
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(self.s().file_output)
+                        .color(TEXT)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                info_icon(ui, self.s().info_file_output);
+                let mut enabled = self.active().output_file_enabled;
+                if ui
+                    .checkbox(&mut enabled, self.s().file_output_enabled)
+                    .changed()
+                {
+                    self.active_mut().output_file_enabled = enabled;
+                    self.mark_dirty();
+                    if enabled {
+                        self.write_output_file();
+                    }
                 }
-                if let Some(err) = &self.server_error {
-                    ui.colored_label(BAD, format!("({err})"));
+                let mut path_str = self
+                    .active()
+                    .output_file
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut path_str)
+                        .desired_width(280.0)
+                        .margin(egui::Margin::symmetric(10.0, 10.0))
+                        .font(egui::TextStyle::Button)
+                        .hint_text(self.s().file_output_path),
+                );
+                if resp.changed() {
+                    let trimmed = path_str.trim();
+                    self.active_mut().output_file = if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(std::path::PathBuf::from(trimmed))
+                    };
+                    self.mark_dirty();
+                }
+                if ghost_button(ui, self.s().file_output_browse).clicked() {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(self.s().file_output)
+                        .set_file_name("shiny_count.txt")
+                        .add_filter("Text", &["txt"]);
+                    if let Some(parent) =
+                        self.active().output_file.as_ref().and_then(|p| p.parent())
+                    {
+                        dialog = dialog.set_directory(parent);
+                    }
+                    if let Some(picked) = dialog.save_file() {
+                        self.active_mut().output_file = Some(picked);
+                        self.mark_dirty();
+                        if self.active().output_file_enabled {
+                            self.write_output_file();
+                        }
+                    }
+                }
+                if self.active().output_file.is_some()
+                    && ghost_button(ui, self.s().file_output_clear).clicked()
+                {
+                    self.active_mut().output_file = None;
+                    self.mark_dirty();
                 }
             });
 
@@ -1290,6 +1404,7 @@ impl ShinyApp {
                 let val = self.config.log[i].count_at_event;
                 self.active_mut().count = val;
                 self.mark_dirty();
+                self.write_output_file();
             }
             if pages > 1 {
                 ui.add_space(6.0);
@@ -1657,6 +1772,7 @@ impl ShinyApp {
                     self.counter.reset();
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
+                    self.write_output_file();
                     self.mark_dirty();
                 }
                 PendingConfirm::DeletePreset => {
@@ -2285,6 +2401,27 @@ fn format_datetime(dt: OffsetDateTime, lang: Lang) -> String {
 
 fn datetime_from_epoch(epoch_secs: i64) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(epoch_secs).unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
+
+/// Write `bytes` to `path` atomically: stream to a sibling `.tmp` file, then
+/// rename. Other processes reading the file (e.g. OBS Text Source) only ever
+/// see the previous or the new content, never a half-written buffer.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("shiny-counter.txt");
+    let tmp = parent.join(format!(".{file_name}.tmp"));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.flush()?;
+    }
+    // Best effort: on Windows, rename replaces an existing file iff
+    // MoveFileEx with REPLACE_EXISTING — which is what std::fs::rename uses.
+    std::fs::rename(&tmp, path)
 }
 
 fn format_size(bytes: u64) -> String {

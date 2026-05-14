@@ -84,6 +84,13 @@ pub struct Preset {
     pub sessions: Vec<SessionRecord>,
     #[serde(default)]
     pub accent_color: Option<Color>,
+    /// Optional path of a plain-text file where the counter is mirrored on
+    /// every change. Lets the user point an OBS Text Source (or any
+    /// external reader) at it.
+    #[serde(default)]
+    pub output_file: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub output_file_enabled: bool,
 }
 
 impl Preset {
@@ -100,6 +107,8 @@ impl Preset {
             hits: Vec::new(),
             sessions: Vec::new(),
             accent_color: None,
+            output_file: None,
+            output_file_enabled: false,
         }
     }
 
@@ -180,6 +189,10 @@ pub struct Config {
     pub capture: CaptureSource,
     pub server_port: u16,
     pub server_enabled: bool,
+    /// Whether the / endpoint returns a styled HTML page (true, default)
+    /// or just the raw count as plain text (false).
+    #[serde(default = "default_true")]
+    pub server_styled: bool,
     pub log: Vec<LogEntry>,
     #[serde(default)]
     pub language: Lang,
@@ -193,6 +206,10 @@ pub struct Config {
     /// prompt until `until_epoch`. Older entries are pruned on launch.
     #[serde(default)]
     pub update_snoozes: Vec<UpdateSnooze>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +226,7 @@ impl Default for Config {
             capture: CaptureSource::default(),
             server_port: 7878,
             server_enabled: false,
+            server_styled: true,
             log: Vec::new(),
             language: Lang::default(),
             _monitor_index_legacy: None,
