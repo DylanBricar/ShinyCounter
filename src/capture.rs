@@ -14,8 +14,11 @@ pub fn list_sources() -> Vec<SourceInfo> {
     let mut out = Vec::new();
     if let Ok(monitors) = Monitor::all() {
         for (i, m) in monitors.iter().enumerate() {
-            let label = format!("[Écran {}] {} — {}×{}", i, m.name(), m.width(), m.height());
-            let short_label = format!("Écran {} ({}×{})", i, m.width(), m.height());
+            let name = m.name().unwrap_or_else(|_| format!("monitor {i}"));
+            let w = m.width().unwrap_or(0);
+            let h = m.height().unwrap_or(0);
+            let label = format!("[Écran {i}] {name} — {w}×{h}");
+            let short_label = format!("Écran {i} ({w}×{h})");
             out.push(SourceInfo {
                 source: CaptureSource::Monitor { index: i },
                 label,
@@ -25,16 +28,16 @@ pub fn list_sources() -> Vec<SourceInfo> {
     }
     if let Ok(windows) = Window::all() {
         for w in windows {
-            if w.is_minimized() {
+            if w.is_minimized().unwrap_or(false) {
                 continue;
             }
-            let title = w.title().to_string();
+            let title = w.title().unwrap_or_default();
             if title.trim().is_empty() {
                 continue;
             }
-            let app = w.app_name().to_string();
-            let id = w.id();
-            let label = format!("[Fenêtre] {} — {}", app, truncate(&title, 60));
+            let app = w.app_name().unwrap_or_default();
+            let id = w.id().unwrap_or(0);
+            let label = format!("[Fenêtre] {app} — {}", truncate(&title, 60));
             let short_label = if !app.trim().is_empty() {
                 format!("Fenêtre: {}", truncate(&app, 22))
             } else {
@@ -80,16 +83,23 @@ pub fn capture_monitor(index: usize) -> Result<RgbaImage> {
 
 pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaImage> {
     let windows = Window::all()?;
-    let by_id = windows.iter().find(|w| w.id() == id);
-    let win = by_id.or_else(|| {
-        windows
-            .iter()
-            .find(|w| w.title() == title_hint && w.app_name() == app_hint)
-    });
-    let win = win
-        .or_else(|| windows.iter().find(|w| w.title() == title_hint))
+    // xcap 0.6 returns Result from accessors — collect them once and match.
+    let resolved = windows
+        .iter()
+        .find(|w| w.id().ok() == Some(id))
+        .or_else(|| {
+            windows.iter().find(|w| {
+                w.title().as_deref().ok() == Some(title_hint)
+                    && w.app_name().as_deref().ok() == Some(app_hint)
+            })
+        })
+        .or_else(|| {
+            windows
+                .iter()
+                .find(|w| w.title().as_deref().ok() == Some(title_hint))
+        })
         .ok_or_else(|| anyhow!("window not found (id {id}, title \"{title_hint}\")"))?;
-    Ok(win.capture_image()?)
+    Ok(resolved.capture_image()?)
 }
 
 pub fn sample_color(img: &RgbaImage, x: i32, y: i32) -> Option<Color> {
