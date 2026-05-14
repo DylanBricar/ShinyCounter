@@ -122,9 +122,16 @@ pub struct Strings {
     pub update_available_title: &'static str,
     pub update_available_msg: &'static str,
     pub update_open: &'static str,
+    pub update_download: &'static str,
+    pub update_downloading: &'static str,
+    pub update_downloaded_title: &'static str,
+    pub update_downloaded_msg: &'static str,
+    pub update_open_file: &'static str,
+    pub update_no_asset: &'static str,
     pub update_later: &'static str,
     pub update_auto_download: &'static str,
     pub update_error: &'static str,
+    pub update_snooze_note: &'static str,
     pub info_obs_overlay: &'static str,
     pub info_tolerance: &'static str,
     pub info_interval: &'static str,
@@ -240,9 +247,16 @@ const FR: Strings = Strings {
     update_available_msg:
         "Une nouvelle version de Shiny Counter est disponible. Tu peux ouvrir la page GitHub pour télécharger l'installeur correspondant à ton système.",
     update_open: "Ouvrir GitHub",
-    update_later: "Plus tard",
+    update_download: "Télécharger",
+    update_downloading: "Téléchargement…",
+    update_downloaded_title: "Téléchargement terminé",
+    update_downloaded_msg: "L'installeur a été enregistré dans ton dossier Téléchargements. Ferme Shiny Counter, puis ouvre le fichier pour installer la nouvelle version. Tes préréglages et ton historique sont conservés (config stockée dans %APPDATA%\\ShinyCounter).",
+    update_open_file: "Ouvrir le fichier",
+    update_no_asset: "Aucun installeur n'est disponible pour ta plateforme. Ouvre la page GitHub pour télécharger manuellement.",
+    update_later: "Plus tard (7 jours)",
     update_auto_download: "Télécharger automatiquement les mises à jour",
     update_error: "Échec de la vérification",
+    update_snooze_note: "Cette version sera proposée à nouveau dans 7 jours.",
     info_obs_overlay:
         "Petit serveur HTTP local (127.0.0.1) qui sert le compteur. Ajoute http://127.0.0.1:7878/ comme Browser Source dans OBS pour afficher le numéro sur ton stream — la page se rafraîchit toute seule 4×/seconde.",
     info_tolerance:
@@ -260,7 +274,7 @@ const FR: Strings = Strings {
     info_pick:
         "Capture un screenshot de la source choisie, puis clique 3 fois dessus pour placer les pipettes. Chaque clic enregistre la couleur du pixel ciblé comme cible à matcher.",
     info_auto_update:
-        "Si activé, Shiny Counter ouvre directement la page GitHub d'une nouvelle release dès qu'elle est disponible, sans demander confirmation.",
+        "Si activé, Shiny Counter télécharge directement la nouvelle version dans ton dossier Téléchargements dès qu'elle est disponible, sans demander confirmation. Tes préréglages restent intacts (config stockée dans %APPDATA%\\ShinyCounter).",
 };
 
 const EN: Strings = Strings {
@@ -367,9 +381,16 @@ const EN: Strings = Strings {
     update_available_msg:
         "A new version of Shiny Counter is available. Open the GitHub release page to download the installer for your platform.",
     update_open: "Open GitHub",
-    update_later: "Later",
-    update_auto_download: "Open new releases automatically",
+    update_download: "Download",
+    update_downloading: "Downloading…",
+    update_downloaded_title: "Download complete",
+    update_downloaded_msg: "The installer has been saved to your Downloads folder. Close Shiny Counter, then open the file to install the new version. Your presets and history are preserved (config lives in %APPDATA%\\ShinyCounter).",
+    update_open_file: "Open file",
+    update_no_asset: "No installer is available for your platform. Open the GitHub page to download manually.",
+    update_later: "Later (7 days)",
+    update_auto_download: "Download new releases automatically",
     update_error: "Update check failed",
+    update_snooze_note: "This version will be offered again in 7 days.",
     info_obs_overlay:
         "Tiny local HTTP server (127.0.0.1) serving the counter. Add http://127.0.0.1:7878/ as an OBS Browser Source — the page polls itself 4 times per second so the number updates live.",
     info_tolerance:
@@ -387,7 +408,7 @@ const EN: Strings = Strings {
     info_pick:
         "Captures a screenshot of the chosen source, then prompts you to click 3 spots. Each click records that pixel's color as a target to match.",
     info_auto_update:
-        "When enabled, Shiny Counter opens the GitHub release page automatically as soon as a new version is detected, with no prompt.",
+        "When enabled, Shiny Counter downloads the new version straight to your Downloads folder as soon as it's available, with no prompt. Your presets stay intact (config lives in %APPDATA%\\ShinyCounter).",
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {

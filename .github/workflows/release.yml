@@ -150,8 +150,8 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_glob: "target/x86_64-pc-windows-msvc/release/shiny_counter.exe"
-            asset_name: "ShinyCounter-${VERSION}-windows-x86_64.zip"
-            archive_kind: zip
+            asset_name: "ShinyCounter-${VERSION}-windows-x86_64.exe"
+            archive_kind: exe
           - name: macos-aarch64
             os: macos-14
             target: aarch64-apple-darwin
@@ -220,7 +220,7 @@ jobs:
         shell: bash
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Stage artifact (Unix tarball)
+      - name: Stage artifact (Unix tarball — binary only)
         if: matrix.archive_kind == 'tar'
         shell: bash
         env:
@@ -230,18 +230,18 @@ jobs:
         run: |
           set -eux
           OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
-          STAGE_DIR="ShinyCounter-$VERSION"
-          mkdir -p "$STAGE_DIR"
+          # Bundle just the binary, nothing else — README / LICENSE live on
+          # the GitHub repo page.
+          STAGE_DIR=$(mktemp -d)
           cp "$SRC" "$STAGE_DIR/shiny_counter"
-          cp README.md "$STAGE_DIR/" 2>/dev/null || true
-          cp LICENSE "$STAGE_DIR/" 2>/dev/null || true
           chmod +x "$STAGE_DIR/shiny_counter"
-          tar -czf "$OUT_NAME" "$STAGE_DIR"
+          tar -C "$STAGE_DIR" -czf "$OUT_NAME" shiny_counter
+          rm -rf "$STAGE_DIR"
           echo "ASSET_PATH=$OUT_NAME" >> "$GITHUB_ENV"
           echo "ASSET_NAME=$OUT_NAME" >> "$GITHUB_ENV"
 
-      - name: Stage artifact (Windows zip)
-        if: matrix.archive_kind == 'zip'
+      - name: Stage artifact (Windows bare .exe)
+        if: matrix.archive_kind == 'exe'
         shell: pwsh
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
@@ -250,12 +250,8 @@ jobs:
         run: |
           $version = $env:VERSION
           $outName = $env:OUT.Replace('${VERSION}', $version)
-          $stageDir = "ShinyCounter-$version"
-          New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
-          Copy-Item $env:SRC -Destination "$stageDir/ShinyCounter.exe"
-          if (Test-Path "README.md") { Copy-Item README.md $stageDir }
-          if (Test-Path "LICENSE") { Copy-Item LICENSE $stageDir }
-          Compress-Archive -Path $stageDir -DestinationPath $outName -Force
+          # Upload the .exe straight — no zip, no README, no LICENSE.
+          Copy-Item $env:SRC -Destination $outName -Force
           "ASSET_PATH=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
           "ASSET_NAME=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
 

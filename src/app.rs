@@ -680,6 +680,26 @@ impl ShinyApp {
                         UpdateStatus::Available(info) => {
                             pill(ui, &format!("v{}", info.latest_version), SHINY, SHINY);
                         }
+                        UpdateStatus::Downloading { percent, .. } => {
+                            pill(
+                                ui,
+                                &format!("{} {percent}%", self.s().update_downloading),
+                                SHINY,
+                                SHINY,
+                            );
+                        }
+                        UpdateStatus::Downloaded { info, .. } => {
+                            pill(
+                                ui,
+                                &format!(
+                                    "{} v{}",
+                                    self.s().update_downloaded_title,
+                                    info.latest_version
+                                ),
+                                GOOD,
+                                GOOD,
+                            );
+                        }
                         UpdateStatus::Error(e) => {
                             ui.colored_label(BAD, format!("{}: {e}", self.s().update_error));
                         }
@@ -1675,22 +1695,43 @@ impl ShinyApp {
 
     fn render_update_modal(&mut self, ctx: &egui::Context) {
         let status = self.update_channel.status();
-        let info = match status {
-            UpdateStatus::Available(info) => info,
-            _ => return,
+
+        // Active version from any update state that should pop the modal.
+        let version_in_play = match &status {
+            UpdateStatus::Available(i)
+            | UpdateStatus::Downloading { info: i, .. }
+            | UpdateStatus::Downloaded { info: i, .. } => Some(i.latest_version.clone()),
+            _ => None,
+        };
+        let Some(version) = version_in_play else {
+            return;
         };
 
-        // Auto-open path: if the user toggled the auto-download setting, open the
-        // GitHub release page exactly once for this version then exit silently.
-        if self.config.auto_download_updates
-            && self.update_auto_opened_for.as_deref() != Some(&info.latest_version)
+        // Snooze gating.
+        let now = epoch_now();
+        if self
+            .config
+            .update_snoozes
+            .iter()
+            .any(|s| s.version == version && s.until_epoch > now)
         {
-            update::open_release_page(&info);
-            self.update_auto_opened_for = Some(info.latest_version.clone());
             return;
         }
 
-        if self.update_prompt_dismissed_for.as_deref() == Some(&info.latest_version) {
+        // Auto-download path: start the download silently the first time we
+        // see this version with the setting on.
+        if let UpdateStatus::Available(info) = &status {
+            if self.config.auto_download_updates
+                && info.asset.is_some()
+                && self.update_auto_opened_for.as_deref() != Some(&info.latest_version)
+            {
+                self.update_auto_opened_for = Some(info.latest_version.clone());
+                update::spawn_download(self.update_channel.clone(), info.clone());
+                return;
+            }
+        }
+
+        if self.update_prompt_dismissed_for.as_deref() == Some(&version) {
             return;
         }
 
@@ -1708,18 +1749,18 @@ impl ShinyApp {
             });
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.update_prompt_dismissed_for = Some(info.latest_version.clone());
+            self.update_prompt_dismissed_for = Some(version.clone());
             return;
         }
 
-        let mut do_open = false;
-        let mut dismissed = false;
-        let title = self.s().update_available_title;
-        let body = self.s().update_available_msg;
-        let body_versions = format!("{}  →  v{}", info.current_version, info.latest_version);
-        let release_name = info.release_name.clone();
         let acc = self.accent32();
-        egui::Window::new(title)
+        let mut action_download = false;
+        let mut action_open_file: Option<std::path::PathBuf> = None;
+        let mut action_open_page: Option<update::UpdateInfo> = None;
+        let mut action_snooze = false;
+        let mut action_close = false;
+
+        egui::Window::new("update_modal")
             .id(egui::Id::new("update_modal_window"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -1741,39 +1782,170 @@ impl ShinyApp {
                     }),
             )
             .show(ctx, |ui| {
-                ui.set_width(460.0);
-                ui.label(egui::RichText::new(title).size(17.0).strong().color(TEXT));
-                ui.add_space(6.0);
-                pill(ui, &release_name, SHINY, SHINY);
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(body).color(TEXT_DIM).size(13.5));
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(body_versions)
-                        .color(TEXT_DIM)
-                        .monospace()
-                        .small(),
-                );
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if colored_button(ui, self.s().update_open, acc, acc).clicked() {
-                            do_open = true;
-                        }
+                ui.set_width(480.0);
+                match &status {
+                    UpdateStatus::Available(info) => {
+                        ui.label(
+                            egui::RichText::new(self.s().update_available_title)
+                                .size(17.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.add_space(6.0);
+                        pill(ui, &info.release_name, SHINY, SHINY);
                         ui.add_space(8.0);
-                        if ghost_button(ui, self.s().update_later).clicked() {
-                            dismissed = true;
+                        ui.label(
+                            egui::RichText::new(self.s().update_available_msg)
+                                .color(TEXT_DIM)
+                                .size(13.5),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "v{}  ->  v{}",
+                                info.current_version, info.latest_version
+                            ))
+                            .color(TEXT_DIM)
+                            .monospace()
+                            .small(),
+                        );
+                        if info.asset.is_none() {
+                            ui.add_space(6.0);
+                            ui.colored_label(BAD, self.s().update_no_asset);
                         }
-                    });
-                });
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if info.asset.is_some() {
+                                        if colored_button(ui, self.s().update_download, acc, acc)
+                                            .clicked()
+                                        {
+                                            action_download = true;
+                                        }
+                                    } else if colored_button(ui, self.s().update_open, acc, acc)
+                                        .clicked()
+                                    {
+                                        action_open_page = Some(info.clone());
+                                    }
+                                    ui.add_space(8.0);
+                                    if ghost_button(ui, self.s().update_later).clicked() {
+                                        action_snooze = true;
+                                    }
+                                },
+                            );
+                        });
+                    }
+                    UpdateStatus::Downloading { info, percent } => {
+                        ui.label(
+                            egui::RichText::new(self.s().update_downloading)
+                                .size(17.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.add_space(6.0);
+                        pill(ui, &info.release_name, SHINY, SHINY);
+                        ui.add_space(10.0);
+                        ui.add(
+                            egui::ProgressBar::new(*percent as f32 / 100.0)
+                                .show_percentage()
+                                .desired_width(440.0),
+                        );
+                        if let Some(asset) = &info.asset {
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}  ({})",
+                                    asset.name,
+                                    format_size(asset.size)
+                                ))
+                                .color(TEXT_DIM)
+                                .monospace()
+                                .small(),
+                            );
+                        }
+                    }
+                    UpdateStatus::Downloaded { info, path } => {
+                        ui.label(
+                            egui::RichText::new(self.s().update_downloaded_title)
+                                .size(17.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.add_space(6.0);
+                        pill(ui, &info.release_name, SHINY, SHINY);
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(self.s().update_downloaded_msg)
+                                .color(TEXT_DIM)
+                                .size(13.5),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(path.display().to_string())
+                                .color(TEXT_DIM)
+                                .monospace()
+                                .small(),
+                        );
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if colored_button(ui, self.s().update_open_file, acc, acc)
+                                        .clicked()
+                                    {
+                                        action_open_file = Some(path.clone());
+                                    }
+                                    ui.add_space(8.0);
+                                    if ghost_button(ui, self.s().cancel).clicked() {
+                                        action_close = true;
+                                    }
+                                },
+                            );
+                        });
+                    }
+                    _ => {}
+                }
             });
 
-        if do_open {
-            update::open_release_page(&info);
-            self.update_prompt_dismissed_for = Some(info.latest_version);
-        } else if dismissed {
-            self.update_prompt_dismissed_for = Some(info.latest_version);
+        if action_download {
+            if let UpdateStatus::Available(info) = &status {
+                update::spawn_download(self.update_channel.clone(), info.clone());
+            }
         }
+        if let Some(page_info) = action_open_page {
+            update::open_release_page(&page_info);
+            self.snooze_version(&version);
+        }
+        if let Some(path) = action_open_file {
+            let _ = update::open_path(&path);
+            self.snooze_version(&version);
+            self.update_channel.set(UpdateStatus::Idle);
+        }
+        if action_snooze {
+            self.snooze_version(&version);
+            self.update_channel.set(UpdateStatus::Idle);
+        }
+        if action_close {
+            self.update_channel.set(UpdateStatus::Idle);
+        }
+    }
+
+    fn snooze_version(&mut self, version: &str) {
+        let until = epoch_now() + update::SNOOZE_DURATION_SECS;
+        let snoozes = &mut self.config.update_snoozes;
+        if let Some(existing) = snoozes.iter_mut().find(|s| s.version == version) {
+            existing.until_epoch = until;
+        } else {
+            snoozes.push(shiny_counter::types::UpdateSnooze {
+                version: version.to_string(),
+                until_epoch: until,
+            });
+        }
+        self.update_prompt_dismissed_for = Some(version.to_string());
+        self.mark_dirty();
     }
 
     fn render_status_bar(&self, ui: &mut egui::Ui) {
@@ -2113,6 +2285,16 @@ fn format_datetime(dt: OffsetDateTime, lang: Lang) -> String {
 
 fn datetime_from_epoch(epoch_secs: i64) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(epoch_secs).unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn format_delta(seconds: i64) -> String {

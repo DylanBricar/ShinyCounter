@@ -185,10 +185,20 @@ pub struct Config {
     pub language: Lang,
     #[serde(default)]
     pub _monitor_index_legacy: Option<usize>,
-    /// When true, a newer release on GitHub is opened in the browser without
-    /// prompting. When false (default), the user gets a modal first.
+    /// When true, a newer release is downloaded automatically (no prompt).
+    /// When false (default), the user gets a modal with a "Download" button.
     #[serde(default)]
     pub auto_download_updates: bool,
+    /// Releases for which the user clicked "Later". Each entry mutes the
+    /// prompt until `until_epoch`. Older entries are pruned on launch.
+    #[serde(default)]
+    pub update_snoozes: Vec<UpdateSnooze>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSnooze {
+    pub version: String,
+    pub until_epoch: i64,
 }
 
 impl Default for Config {
@@ -203,6 +213,7 @@ impl Default for Config {
             language: Lang::default(),
             _monitor_index_legacy: None,
             auto_download_updates: false,
+            update_snoozes: Vec::new(),
         }
     }
 }
@@ -224,5 +235,11 @@ impl Config {
         if let Some(idx) = self._monitor_index_legacy.take() {
             self.capture = CaptureSource::Monitor { index: idx };
         }
+        // Drop expired snoozes so they don't bloat the config forever.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.update_snoozes.retain(|s| s.until_epoch > now);
     }
 }
