@@ -73,8 +73,8 @@ Dépendances Linux (X11 + Wayland) :
 ```bash
 sudo apt install libxkbcommon-dev libgtk-3-dev libxcb1-dev libx11-dev \
   libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev \
-  libgl1-mesa-dev libfontconfig1-dev libpipewire-0.3-dev libdbus-1-dev \
-  libclang-dev clang pkg-config
+  libgl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libfontconfig1-dev \
+  libpipewire-0.3-dev libdbus-1-dev libclang-dev clang pkg-config
 ```
 
 ### Comment ça marche
@@ -157,8 +157,8 @@ Linux build deps:
 ```bash
 sudo apt install libxkbcommon-dev libgtk-3-dev libxcb1-dev libx11-dev \
   libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev \
-  libgl1-mesa-dev libfontconfig1-dev libpipewire-0.3-dev libdbus-1-dev \
-  libclang-dev clang pkg-config
+  libgl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libfontconfig1-dev \
+  libpipewire-0.3-dev libdbus-1-dev libclang-dev clang pkg-config
 ```
 
 ### How to use

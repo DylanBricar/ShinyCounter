@@ -37,6 +37,9 @@ jobs:
             libudev-dev \
             libfontconfig1-dev \
             libgl1-mesa-dev \
+            libegl-dev \
+            libgbm-dev \
+            libdrm-dev \
             libxcb1-dev \
             libx11-dev \
             libxrandr-dev \
