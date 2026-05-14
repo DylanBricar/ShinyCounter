@@ -43,7 +43,12 @@ jobs:
             libxinerama-dev \
             libxcursor-dev \
             libxi-dev \
-            libwayland-dev
+            libwayland-dev \
+            libpipewire-0.3-dev \
+            libdbus-1-dev \
+            libclang-dev \
+            clang \
+            pkg-config
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
