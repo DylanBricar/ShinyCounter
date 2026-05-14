@@ -32,7 +32,7 @@ time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 ureq = { version = "2.10", default-features = false, features = ["tls", "gzip", "json"] }
 webbrowser = "1.0"
 semver = "1.0"
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
+rfd = { version = "0.15", default-features = false, features = ["gtk3", "common-controls-v6"] }
 
 [dev-dependencies]
 proptest = "1"
