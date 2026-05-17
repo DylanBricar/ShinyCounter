@@ -22,9 +22,7 @@ fn main() {
     for &size in &ico_sizes {
         let rgba = render_pokeball(size);
         let image = ico::IconImage::from_rgba_data(size, size, rgba);
-        icon_dir.add_entry(
-            ico::IconDirEntry::encode(&image).expect("encode ICO sub-image"),
-        );
+        icon_dir.add_entry(ico::IconDirEntry::encode(&image).expect("encode ICO sub-image"));
     }
     let ico_path = out_dir.join("icon.ico");
     let mut ico_file = fs::File::create(&ico_path).expect("create icon.ico");
