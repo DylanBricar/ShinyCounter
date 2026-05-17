@@ -79,13 +79,39 @@ pub struct ShinyApp {
     pub(super) update_auto_initiated: bool,
 }
 
+fn close_open_sessions_from_previous_run(config: &mut Config) -> bool {
+    let mut changed = false;
+    for preset in &mut config.presets {
+        for session in &mut preset.sessions {
+            if session.is_open() {
+                if let Some(hit) = session.hits.last() {
+                    session.ended_at_epoch = Some(hit.epoch_secs);
+                    session.ended_at = Some(hit.timestamp.clone());
+                } else {
+                    session.ended_at_epoch = Some(session.started_at_epoch);
+                    if !session.started_at.is_empty() {
+                        session.ended_at = Some(session.started_at.clone());
+                    }
+                }
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 impl ShinyApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let mut config = storage::load();
+        let storage::LoadOutcome {
+            mut config,
+            warning,
+        } = storage::load_with_warning();
         config.ensure_invariants();
         let sources = list_sources();
+        let initial_status =
+            warning.unwrap_or_else(|| i18n::strings(config.language).ready.to_string());
         let mut app = Self {
-            status: i18n::strings(config.language).ready.to_string(),
+            status: initial_status,
             config,
             counter: CounterState::default(),
             running: false,
@@ -117,12 +143,8 @@ impl ShinyApp {
         // Fire and forget a one-shot release check on launch.
         update::spawn_check(app.update_channel.clone());
         // Close any leftover open sessions from a previous run.
-        for p in &mut app.config.presets {
-            if let Some(last) = p.sessions.last_mut() {
-                if last.is_open() {
-                    last.ended_at_epoch = last.hits.last().map(|h| h.epoch_secs);
-                }
-            }
+        if close_open_sessions_from_previous_run(&mut app.config) {
+            app.mark_dirty();
         }
         app.sync_hex_buf();
         // Sync the output file to the active preset's current count on boot.
@@ -200,6 +222,9 @@ impl ShinyApp {
             Err(e) => {
                 self.status = format!("{}: {e}", self.s().capture_error);
                 self.running = false;
+                self.close_session();
+                self.last_sample.clear();
+                self.mark_dirty();
                 return;
             }
         };
@@ -243,7 +268,7 @@ impl ShinyApp {
         }
 
         // Always push the latest state to the HTTP server (cheap in-memory
-        // update — keeps `is_armed`, count, and preset name live for
+        // update - keeps `is_armed`, count, and preset name live for
         // /count, /count.txt, and /poll). The file write is more expensive
         // and only fires when the count actually moves.
         self.push_server_state();
@@ -478,7 +503,7 @@ impl ShinyApp {
 }
 
 impl eframe::App for ShinyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.theme_installed {
             theme::install(ctx);
             self.theme_installed = true;
@@ -489,30 +514,92 @@ impl eframe::App for ShinyApp {
         self.refresh_sources_if_stale();
         self.ensure_server();
         self.tick(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
 
         let central = egui::CentralPanel::default().frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG)
-                .inner_margin(egui::Margin::same(18.0)),
+                .inner_margin(egui::Margin::same(18)),
         );
 
         match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => {
-                central.show(ctx, |ui| self.render_idle(ctx, ui));
+                central.show_inside(ui, |ui| self.render_idle(&ctx, ui));
             }
             Mode::Picking(session) => {
-                let session = self.render_picking(ctx, central, session);
+                let session = self.render_picking(&ctx, ui, central, session);
                 if let Some(s) = session {
                     self.mode = Mode::Picking(s);
                 }
             }
         }
-        self.render_confirm_modal(ctx);
-        self.render_update_modal(ctx);
+        self.render_confirm_modal(&ctx);
+        self.render_update_modal(&ctx);
         self.flush_save();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.close_session();
         let _ = storage::save(&self.config);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previous_empty_open_sessions_are_closed_to_their_start_time() {
+        let mut config = Config::default();
+        config.presets[0].sessions.push(SessionRecord {
+            started_at_epoch: 123,
+            started_at: "start".into(),
+            ended_at_epoch: None,
+            ended_at: None,
+            hits: Vec::new(),
+        });
+
+        let changed = close_open_sessions_from_previous_run(&mut config);
+
+        assert!(changed);
+        let session = &config.presets[0].sessions[0];
+        assert_eq!(session.ended_at_epoch, Some(123));
+        assert!(!session.is_open());
+    }
+
+    #[test]
+    fn all_previous_open_sessions_are_closed() {
+        let mut config = Config::default();
+        config.presets[0].sessions = vec![
+            SessionRecord {
+                started_at_epoch: 10,
+                started_at: "first".into(),
+                ended_at_epoch: None,
+                ended_at: None,
+                hits: Vec::new(),
+            },
+            SessionRecord {
+                started_at_epoch: 20,
+                started_at: "second".into(),
+                ended_at_epoch: None,
+                ended_at: None,
+                hits: vec![HitRecord {
+                    timestamp: "hit".into(),
+                    epoch_secs: 25,
+                    delta_secs: 5,
+                    index: 1,
+                }],
+            },
+        ];
+
+        let changed = close_open_sessions_from_previous_run(&mut config);
+
+        assert!(changed);
+        assert_eq!(config.presets[0].sessions[0].ended_at_epoch, Some(10));
+        assert_eq!(config.presets[0].sessions[1].ended_at_epoch, Some(25));
+        assert!(config.presets[0].sessions.iter().all(|s| !s.is_open()));
     }
 }

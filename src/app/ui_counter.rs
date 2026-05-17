@@ -76,7 +76,7 @@ impl ShinyApp {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let bw = (w - 16.0) / 3.0;
                 if ui
-                    .add_sized([bw, 36.0], egui::Button::new("-1").rounding(10.0))
+                    .add_sized([bw, 36.0], egui::Button::new("-1").corner_radius(10))
                     .clicked()
                 {
                     let c = self.active().count.saturating_sub(1);
@@ -85,7 +85,7 @@ impl ShinyApp {
                     self.broadcast_state();
                 }
                 if ui
-                    .add_sized([bw, 36.0], egui::Button::new("+1").rounding(10.0))
+                    .add_sized([bw, 36.0], egui::Button::new("+1").corner_radius(10))
                     .clicked()
                 {
                     self.active_mut().count = self.active().count.saturating_add(1);
@@ -93,7 +93,10 @@ impl ShinyApp {
                     self.broadcast_state();
                 }
                 if ui
-                    .add_sized([bw, 36.0], egui::Button::new(self.s().reset).rounding(10.0))
+                    .add_sized(
+                        [bw, 36.0],
+                        egui::Button::new(self.s().reset).corner_radius(10),
+                    )
                     .clicked()
                 {
                     self.pending_confirm = PendingConfirm::ResetCounter;
@@ -180,11 +183,11 @@ impl ShinyApp {
         };
         let accent = self.accent32();
 
-        egui::Frame::none()
+        egui::Frame::NONE
             .fill(SURFACE_2)
             .stroke(egui::Stroke::new(1.0, border_color))
-            .rounding(egui::Rounding::same(10.0))
-            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(egui::Margin::symmetric(12, 6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
@@ -246,19 +249,14 @@ impl ShinyApp {
                         egui::Button::new("")
                             .fill(egui::Color32::from_rgb(p.target.r, p.target.g, p.target.b))
                             .stroke(egui::Stroke::new(1.0, BORDER))
-                            .rounding(egui::Rounding::same(6.0))
+                            .corner_radius(egui::CornerRadius::same(6))
                             .min_size(egui::vec2(34.0, 30.0)),
                     );
-                    if swatch_resp.clicked() {
-                        ui.memory_mut(|m| m.toggle_popup(popup_id));
-                    }
                     let mut commit_color: Option<Color> = None;
-                    egui::popup::popup_below_widget(
-                        ui,
-                        popup_id,
-                        &swatch_resp,
-                        egui::PopupCloseBehavior::CloseOnClickOutside,
-                        |ui| {
+                    egui::Popup::from_toggle_button_response(&swatch_resp)
+                        .id(popup_id)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
                             ui.set_min_width(260.0);
                             ui.spacing_mut().slider_width = 200.0;
                             let mut c32 =
@@ -300,8 +298,7 @@ impl ShinyApp {
                                     ui.ctx().copy_text(p.target.to_hex());
                                 }
                             });
-                        },
-                    );
+                        });
                     if let Some(new_c) = commit_color {
                         self.active_mut().pickers[i].target = new_c;
                         self.hex_buf.insert(i, new_c.to_hex());
@@ -324,7 +321,7 @@ impl ShinyApp {
                     ui.add_space(8.0);
                     let can_remove = self.active().pickers.len() > MIN_PICKERS;
                     let col = if can_remove { BAD } else { TEXT_DIM };
-                    let resp = icon_button(ui, "×", col).on_hover_text(self.s().remove_slot_tip);
+                    let resp = icon_button(ui, "x", col).on_hover_text(self.s().remove_slot_tip);
                     if can_remove && resp.clicked() {
                         self.pending_confirm = PendingConfirm::DeletePicker(i);
                     }

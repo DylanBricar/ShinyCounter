@@ -43,7 +43,7 @@ impl ShinyApp {
             .fixed_pos(egui::pos2(0.0, 0.0))
             .interactable(true)
             .show(ctx, |ui| {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 ui.painter()
                     .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
                 ui.allocate_response(screen_rect.size(), egui::Sense::click_and_drag());
@@ -66,15 +66,15 @@ impl ShinyApp {
             .title_bar(false)
             .auto_sized()
             .frame(
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(SURFACE)
                     .stroke(egui::Stroke::new(1.0, BORDER))
-                    .rounding(egui::Rounding::same(14.0))
-                    .inner_margin(egui::Margin::same(20.0))
+                    .corner_radius(egui::CornerRadius::same(14))
+                    .inner_margin(egui::Margin::same(20))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 32.0,
-                        spread: 0.0,
+                        offset: [0, 8],
+                        blur: 32,
+                        spread: 0,
                         color: egui::Color32::from_black_alpha(180),
                     }),
             )
@@ -111,7 +111,7 @@ impl ShinyApp {
                     self.counter.reset();
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
-                    self.write_output_file();
+                    self.broadcast_state();
                     self.mark_dirty();
                 }
                 PendingConfirm::DeletePreset => {
@@ -207,7 +207,7 @@ impl ShinyApp {
             .fixed_pos(egui::pos2(0.0, 0.0))
             .interactable(true)
             .show(ctx, |ui| {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 ui.painter()
                     .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
                 ui.allocate_response(screen_rect.size(), egui::Sense::click_and_drag());
@@ -234,15 +234,15 @@ impl ShinyApp {
             .title_bar(false)
             .auto_sized()
             .frame(
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(SURFACE)
                     .stroke(egui::Stroke::new(1.0, BORDER))
-                    .rounding(egui::Rounding::same(14.0))
-                    .inner_margin(egui::Margin::same(20.0))
+                    .corner_radius(egui::CornerRadius::same(14))
+                    .inner_margin(egui::Margin::same(20))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 32.0,
-                        spread: 0.0,
+                        offset: [0, 8],
+                        blur: 32,
+                        spread: 0,
                         color: egui::Color32::from_black_alpha(180),
                     }),
             )

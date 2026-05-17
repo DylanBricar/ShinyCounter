@@ -56,6 +56,11 @@ impl CounterServer {
     pub fn start(port: u16) -> Result<Self> {
         let addr = (IpAddr::V4(Ipv4Addr::LOCALHOST), port);
         let server = Server::http(addr).map_err(|e| anyhow!("http listen {port}: {e}"))?;
+        let actual_port = server
+            .server_addr()
+            .to_ip()
+            .map(|addr| addr.port())
+            .unwrap_or(port);
         let state = Arc::new((Mutex::new(OverlayState::default()), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -69,7 +74,7 @@ impl CounterServer {
             state,
             shutdown,
             handle: Some(handle),
-            port,
+            port: actual_port,
         })
     }
 
@@ -342,58 +347,44 @@ mod tests {
 
     #[test]
     fn server_starts_on_random_port_and_serves_count() {
-        let port = 17_873u16;
-        let srv = match CounterServer::start(port) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let srv = CounterServer::start(0).expect("server should bind an ephemeral port");
+        let port = srv.port;
         srv.update(42, "Test Preset".to_string(), true, true);
         std::thread::sleep(Duration::from_millis(50));
 
-        let resp = ureq_get(&format!("http://127.0.0.1:{port}/count"));
-        if let Some(body) = resp {
-            let last_line = body.lines().last().unwrap_or("").trim();
-            assert_eq!(last_line, "42", "expected plain int body, got: {body:?}");
-        }
+        let body = ureq_get(&format!("http://127.0.0.1:{port}/count")).expect("/count response");
+        let last_line = body.lines().last().unwrap_or("").trim();
+        assert_eq!(last_line, "42", "expected plain int body, got: {body:?}");
 
         // Verify the overlay HTML endpoint exists and references /poll.
-        let html = ureq_get(&format!("http://127.0.0.1:{port}/"));
-        if let Some(body) = html {
-            assert!(
-                body.contains("/poll"),
-                "overlay HTML should use /poll long-polling, got: {body:?}"
-            );
-        }
+        let body = ureq_get(&format!("http://127.0.0.1:{port}/")).expect("/ response");
+        assert!(
+            body.contains("/poll"),
+            "overlay HTML should use /poll long-polling, got: {body:?}"
+        );
     }
 
     #[test]
     fn long_poll_endpoint_returns_initial_then_updated_count() {
-        let port = 17_874u16;
-        let srv = match CounterServer::start(port) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let srv = CounterServer::start(0).expect("server should bind an ephemeral port");
+        let port = srv.port;
 
         // Seed an initial value.
         srv.update(7, "Mon".to_string(), true, false);
         std::thread::sleep(Duration::from_millis(50));
 
         // /poll?since=0 should return immediately because version > 0.
-        let resp = ureq_get(&format!("http://127.0.0.1:{port}/poll?since=0"));
-        if let Some(body) = resp {
-            let last = body.lines().last().unwrap_or("").trim().to_string();
-            // Format is "<version>:<count>".
-            assert!(
-                last.contains(":7"),
-                "poll should return count 7, got: {last:?}"
-            );
-        }
+        let body = ureq_get(&format!("http://127.0.0.1:{port}/poll?since=0"))
+            .expect("initial /poll response");
+        let last = body.lines().last().unwrap_or("").trim().to_string();
+        let (version, count) = parse_poll_body(&last);
+        assert_eq!(count, 7, "poll should return count 7, got: {last:?}");
 
         // Update to a new count; spawn a poll that starts before the update.
         let port2 = port;
         let poll_handle = std::thread::spawn(move || {
             // Request with since=current version so it will block briefly.
-            ureq_get(&format!("http://127.0.0.1:{port2}/poll?since=9999"))
+            ureq_get(&format!("http://127.0.0.1:{port2}/poll?since={version}"))
         });
 
         std::thread::sleep(Duration::from_millis(30));
@@ -401,19 +392,21 @@ mod tests {
 
         let result = poll_handle
             .join()
-            .unwrap_or(Some("thread-panic".to_string()));
-        if let Some(body) = result {
-            let last = body.lines().last().unwrap_or("").trim().to_string();
-            // The server may have returned the 25 s timeout response with the
-            // current count (99) OR it may have returned immediately.  Either
-            // way the count in the body must be 99 or the body must at least
-            // contain the updated count or a timeout response.
-            // We accept either :99 (updated) or just a valid version:count.
-            assert!(
-                last.contains(':'),
-                "poll response should be version:count, got: {last:?}"
-            );
-        }
+            .expect("poll thread should not panic")
+            .expect("updated /poll response");
+        let last = result.lines().last().unwrap_or("").trim().to_string();
+        let (_, count) = parse_poll_body(&last);
+        assert_eq!(count, 99, "poll should return updated count, got: {last:?}");
+    }
+
+    fn parse_poll_body(body: &str) -> (u64, u32) {
+        let (version, count) = body
+            .split_once(':')
+            .unwrap_or_else(|| panic!("poll response should be version:count, got: {body:?}"));
+        (
+            version.parse().expect("poll version should be a u64"),
+            count.parse().expect("poll count should be a u32"),
+        )
     }
 
     fn ureq_get(url: &str) -> Option<String> {

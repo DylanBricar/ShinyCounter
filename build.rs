@@ -1,9 +1,9 @@
 //! Build-time icon generation.
 //!
 //! Renders the Pokéball procedurally at several resolutions and writes:
-//! - `$OUT_DIR/icon.ico` — multi-resolution ICO, embedded into the Windows
+//! - `$OUT_DIR/icon.ico` - multi-resolution ICO, embedded into the Windows
 //!   executable below.
-//! - `$OUT_DIR/icon-1024.png` — high-res PNG used by the macOS release
+//! - `$OUT_DIR/icon-1024.png` - high-res PNG used by the macOS release
 //!   workflow (`sips` + `iconutil`) to build a proper `.icns` for the `.app`
 //!   bundle.
 
@@ -64,7 +64,7 @@ fn embed_windows_icon(ico_path: &std::path::Path) {
             .to_str()
             .expect("ICO path must be valid UTF-8 on Windows"),
     );
-    // Cosmetic metadata shown in File Explorer → Properties → Details.
+    // Cosmetic metadata shown in File Explorer -> Properties -> Details.
     res.set("ProductName", "Shiny Counter");
     res.set("FileDescription", "Shiny Counter");
     res.set("CompanyName", "DylanBricar");
@@ -75,7 +75,7 @@ fn embed_windows_icon(ico_path: &std::path::Path) {
 #[cfg(not(windows))]
 fn embed_windows_icon(_ico_path: &std::path::Path) {
     // Non-Windows hosts: nothing to embed. Cross-compiling to Windows from
-    // Linux would need an mingw resource compiler — not currently used by
+    // Linux would need an mingw resource compiler - not currently used by
     // our CI matrix (windows-latest is always the host for the Windows
     // target).
 }

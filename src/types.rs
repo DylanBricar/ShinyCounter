@@ -98,7 +98,7 @@ impl Preset {
         Self {
             name: name.into(),
             // Start with 3 pickers by default (typical shiny signature); user can
-            // remove down to 1 via the per-row × button.
+            // remove down to 1 via the per-row x button.
             pickers: vec![PickerPoint::default(); 3],
             tolerance: DEFAULT_TOLERANCE,
             interval_ms: DEFAULT_INTERVAL_MS,

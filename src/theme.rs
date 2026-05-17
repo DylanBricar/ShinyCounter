@@ -17,31 +17,31 @@ pub const BAD: egui::Color32 = egui::Color32::from_rgb(244, 114, 122);
 /// after [`install`] so changing the active preset takes effect immediately on
 /// all stock egui widgets (buttons, combo boxes, sliders, etc.).
 pub fn apply_accent(ctx: &egui::Context, accent: egui::Color32) {
-    ctx.style_mut(|style| {
+    ctx.global_style_mut(|style| {
         let v = &mut style.visuals;
-        let r8 = egui::Rounding::same(8.0);
+        let r8 = egui::CornerRadius::same(8);
         v.hyperlink_color = accent;
         v.selection.bg_fill = accent.linear_multiply(0.45);
         v.selection.stroke = egui::Stroke::new(1.0, accent);
 
         v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent.linear_multiply(0.65));
         v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
-        v.widgets.hovered.rounding = r8;
+        v.widgets.hovered.corner_radius = r8;
 
         v.widgets.active.bg_fill = accent.linear_multiply(0.85);
         v.widgets.active.weak_bg_fill = accent.linear_multiply(0.85);
         v.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent);
         v.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-        v.widgets.active.rounding = r8;
+        v.widgets.active.corner_radius = r8;
     });
 }
 
 pub fn install(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(14.0, 11.0);
-    style.spacing.window_margin = egui::Margin::same(14.0);
-    style.spacing.menu_margin = egui::Margin::same(8.0);
+    style.spacing.window_margin = egui::Margin::same(14);
+    style.spacing.menu_margin = egui::Margin::same(8);
     style.spacing.indent = 18.0;
     style.spacing.icon_width = 20.0;
     style.spacing.interact_size = egui::vec2(46.0, 36.0);
@@ -81,57 +81,57 @@ pub fn install(ctx: &egui::Context) {
     v.extreme_bg_color = BG;
     v.faint_bg_color = SURFACE_2;
     v.window_stroke = egui::Stroke::new(1.0, BORDER);
-    v.window_rounding = egui::Rounding::same(12.0);
-    v.menu_rounding = egui::Rounding::same(10.0);
-    v.popup_shadow.spread = 8.0;
-    v.popup_shadow.blur = 18.0;
+    v.window_corner_radius = egui::CornerRadius::same(12);
+    v.menu_corner_radius = egui::CornerRadius::same(10);
+    v.popup_shadow.spread = 8;
+    v.popup_shadow.blur = 18;
     v.override_text_color = Some(TEXT);
     v.hyperlink_color = ACCENT_HOT;
     v.selection.bg_fill = ACCENT.linear_multiply(0.45);
     v.selection.stroke = egui::Stroke::new(1.0, ACCENT_HOT);
     v.interact_cursor = Some(egui::CursorIcon::PointingHand);
 
-    let r8 = egui::Rounding::same(8.0);
+    let r8 = egui::CornerRadius::same(8);
     v.widgets.noninteractive.bg_fill = SURFACE_2;
     v.widgets.noninteractive.weak_bg_fill = SURFACE_2;
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BORDER);
     v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT_DIM);
-    v.widgets.noninteractive.rounding = r8;
+    v.widgets.noninteractive.corner_radius = r8;
 
     v.widgets.inactive.bg_fill = SURFACE_2;
     v.widgets.inactive.weak_bg_fill = SURFACE_2;
     v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER);
     v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    v.widgets.inactive.rounding = r8;
+    v.widgets.inactive.corner_radius = r8;
 
     v.widgets.hovered.bg_fill = egui::Color32::from_rgb(45, 50, 72);
     v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(40, 44, 64);
     v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT.linear_multiply(0.65));
     v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    v.widgets.hovered.rounding = r8;
+    v.widgets.hovered.corner_radius = r8;
 
     v.widgets.active.bg_fill = ACCENT.linear_multiply(0.85);
     v.widgets.active.weak_bg_fill = ACCENT.linear_multiply(0.85);
     v.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT_HOT);
     v.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-    v.widgets.active.rounding = r8;
+    v.widgets.active.corner_radius = r8;
 
     v.widgets.open.bg_fill = SURFACE_2;
     v.widgets.open.weak_bg_fill = SURFACE_2;
     v.widgets.open.bg_stroke = egui::Stroke::new(1.0, BORDER);
     v.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    v.widgets.open.rounding = r8;
+    v.widgets.open.corner_radius = r8;
 
-    ctx.set_style(style);
+    ctx.set_global_style(style);
     ctx.set_visuals(v);
 }
 
 pub fn card<R>(ui: &mut egui::Ui, inner: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(SURFACE)
         .stroke(egui::Stroke::new(1.0, BORDER))
-        .rounding(egui::Rounding::same(14.0))
-        .inner_margin(egui::Margin::same(16.0))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::same(16))
         .show(ui, inner)
         .inner
 }
@@ -155,7 +155,7 @@ fn pill_inner(
     // Pick a high-contrast text color so the pill is always legible regardless of
     // the accent that drove it.
     let text_color = contrast_text(bg);
-    let text_w = ui.fonts(|f| {
+    let text_w = ui.fonts_mut(|f| {
         f.layout_no_wrap(label.to_string(), font_id.clone(), text_color)
             .size()
             .x
@@ -170,6 +170,7 @@ fn pill_inner(
         rect,
         h * 0.5,
         egui::Stroke::new(1.0, bg.linear_multiply(0.7)),
+        egui::StrokeKind::Inside,
     );
     let mut x = rect.left() + pad_x;
     if with_dot {
@@ -220,7 +221,7 @@ pub fn colored_button(
     let btn = egui::Button::new(text)
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, stroke_color))
-        .rounding(egui::Rounding::same(10.0))
+        .corner_radius(egui::CornerRadius::same(10))
         .min_size(egui::vec2(0.0, 36.0));
     let resp = ui.add(btn);
     if resp.hovered() {
@@ -234,7 +235,7 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let btn = egui::Button::new(text)
         .fill(SURFACE_2)
         .stroke(egui::Stroke::new(1.0, BORDER))
-        .rounding(egui::Rounding::same(10.0))
+        .corner_radius(egui::CornerRadius::same(10))
         .min_size(egui::vec2(0.0, 32.0));
     let resp = ui.add(btn);
     if resp.hovered() {
@@ -251,7 +252,7 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let btn = egui::Button::new(text)
         .fill(BAD.linear_multiply(0.85))
         .stroke(egui::Stroke::new(1.0, BAD))
-        .rounding(egui::Rounding::same(10.0))
+        .corner_radius(egui::CornerRadius::same(10))
         .min_size(egui::vec2(0.0, 32.0));
     let resp = ui.add(btn);
     if resp.hovered() {
@@ -266,7 +267,7 @@ pub fn icon_button(ui: &mut egui::Ui, glyph: &str, fg: egui::Color32) -> egui::R
     let btn = egui::Button::new(text)
         .fill(BG)
         .stroke(egui::Stroke::new(1.0, fg.linear_multiply(0.55)))
-        .rounding(egui::Rounding::same(8.0))
+        .corner_radius(egui::CornerRadius::same(8))
         .min_size(egui::vec2(32.0, 30.0));
     let resp = ui.add(btn);
     if resp.hovered() {
@@ -308,12 +309,12 @@ pub fn paint_pokeball(painter: &egui::Painter, center: egui::Pos2, radius: f32) 
     // Bottom half (white background)
     painter.circle_filled(center, radius, white);
 
-    // Top half (red) — polygon approximating the upper half.
+    // Top half (red) - polygon approximating the upper half.
     let n = 40;
     let mut pts: Vec<egui::Pos2> = Vec::with_capacity(n + 1);
     for i in 0..=n {
         let t = i as f32 / n as f32;
-        let angle = PI + PI * t; // π → 2π  (top half in screen coords)
+        let angle = PI + PI * t; // pi -> 2pi  (top half in screen coords)
         pts.push(egui::pos2(
             center.x + radius * angle.cos(),
             center.y + radius * angle.sin(),
@@ -321,7 +322,7 @@ pub fn paint_pokeball(painter: &egui::Painter, center: egui::Pos2, radius: f32) 
     }
     painter.add(egui::Shape::convex_polygon(pts, red, egui::Stroke::NONE));
 
-    // Equatorial black band — slightly inset so it sits inside the circle.
+    // Equatorial black band - slightly inset so it sits inside the circle.
     let band_half_w = radius * 0.97;
     let band_h = (radius * 0.20).max(2.0);
     painter.rect_filled(

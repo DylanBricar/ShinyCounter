@@ -12,6 +12,7 @@ impl ShinyApp {
     pub(super) fn render_picking(
         &mut self,
         ctx: &egui::Context,
+        root_ui: &mut egui::Ui,
         panel: egui::CentralPanel,
         mut session: PickSession,
     ) -> Option<PickSession> {
@@ -21,7 +22,7 @@ impl ShinyApp {
         }
         let mut keep = true;
         let mut commit = false;
-        panel.show(ctx, |ui| {
+        panel.show_inside(root_ui, |ui| {
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -72,7 +73,7 @@ impl ShinyApp {
                             }
                         });
                         ui.add_enabled_ui(can_remove, |ui| {
-                            if ghost_button(ui, "−").clicked() {
+                            if ghost_button(ui, "-").clicked() {
                                 session.clicks.pop();
                                 if session.current >= session.clicks.len() {
                                     session.current = session.clicks.len().saturating_sub(1);
@@ -94,11 +95,11 @@ impl ShinyApp {
                     img_area,
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .fill(SURFACE)
                             .stroke(egui::Stroke::new(1.0, BORDER))
-                            .rounding(egui::Rounding::same(12.0))
-                            .inner_margin(egui::Margin::same(8.0))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .inner_margin(egui::Margin::same(8))
                             .show(ui, |ui| {
                                 let avail = ui.available_size();
                                 let img_w = session.image.width() as f32;
@@ -186,11 +187,11 @@ impl ShinyApp {
                     egui::vec2(side_w, total.y),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .fill(SURFACE)
                             .stroke(egui::Stroke::new(1.0, BORDER))
-                            .rounding(egui::Rounding::same(12.0))
-                            .inner_margin(egui::Margin::same(12.0))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new(self.s().slots)
@@ -207,14 +208,14 @@ impl ShinyApp {
                                         } else {
                                             SURFACE_2
                                         };
-                                        let resp = egui::Frame::none()
+                                        let resp = egui::Frame::NONE
                                             .fill(bg)
                                             .stroke(egui::Stroke::new(
                                                 1.0,
                                                 if is_current { ACCENT } else { BORDER },
                                             ))
-                                            .rounding(egui::Rounding::same(8.0))
-                                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                            .corner_radius(egui::CornerRadius::same(8))
+                                            .inner_margin(egui::Margin::symmetric(10, 8))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.label(

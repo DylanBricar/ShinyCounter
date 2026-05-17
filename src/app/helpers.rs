@@ -9,8 +9,12 @@ pub(super) fn color_swatch(ui: &mut egui::Ui, c: Color, size: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, 5.0, egui::Color32::from_rgb(c.r, c.g, c.b));
-    ui.painter()
-        .rect_stroke(rect, 5.0, egui::Stroke::new(1.0, BORDER));
+    ui.painter().rect_stroke(
+        rect,
+        5.0,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
 }
 
 pub(super) fn short_str(s: &str, max: usize) -> String {
@@ -25,7 +29,18 @@ pub(super) fn short_str(s: &str, max: usize) -> String {
 pub(super) fn same_source(a: &CaptureSource, b: &CaptureSource) -> bool {
     match (a, b) {
         (CaptureSource::Monitor { index: ai }, CaptureSource::Monitor { index: bi }) => ai == bi,
-        (CaptureSource::Window { id: ai, .. }, CaptureSource::Window { id: bi, .. }) => ai == bi,
+        (
+            CaptureSource::Window {
+                id: ai,
+                title: at,
+                app: aa,
+            },
+            CaptureSource::Window {
+                id: bi,
+                title: bt,
+                app: ba,
+            },
+        ) => ai == bi && (at == bt || aa == ba),
         _ => false,
     }
 }

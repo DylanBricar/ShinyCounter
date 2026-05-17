@@ -5,23 +5,23 @@ in Rust with [egui](https://github.com/emilk/egui). Pure Rust, single binary,
 no Electron, no browser.
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Shiny Counter — interface" width="900">
+  <img src="assets/screenshot.png" alt="Shiny Counter - interface" width="900">
 </p>
 
 ---
 
-## 🇫🇷 Présentation (Français)
+## Présentation (Français)
 
 ### À quoi ça sert
 
-Quand on chasse un shiny — sur Switch, GBA, émulateur, n'importe quel jeu
-Pokémon en stream — on enchaîne **des centaines, parfois des milliers de soft
+Quand on chasse un shiny - sur Switch, GBA, émulateur, n'importe quel jeu
+Pokémon en stream - on enchaîne **des centaines, parfois des milliers de soft
 resets**. Tenir le compte à la main est pénible et la lecture OCR de l'écran
 est fragile.
 
 Shiny Counter **lit la couleur de pixels précis de ton écran** (3 à 8 pipettes
 configurables) et incrémente automatiquement un compteur dès que **toutes les
-pipettes matchent simultanément** la « signature » d'une rencontre Pokémon.
+pipettes matchent simultanément** la "signature" d'une rencontre Pokémon.
 Une machine d'état évite que le compteur s'emballe tant que l'image reste à
 l'écran : il faut que **toutes les pipettes voient des couleurs différentes**
 (retour au noir entre deux rencontres, par exemple) avant de pouvoir compter
@@ -29,19 +29,19 @@ de nouveau.
 
 ### Fonctionnalités
 
-- 🎯 **3 à 8 pipettes** posées visuellement sur un screenshot, ou aux coordonnées
-- 🧪 **Tolérance RVB** réglable (±0 à ±128) pour s'adapter aux compressions de stream
-- 🔁 **Compteur** avec +1 / -1 / réinitialisation et réarmement manuel
-- 📚 **Préréglages** par jeu / Pokémon avec couleur d'accent personnalisable
-- 🪟 **Capture d'écran complet** (multi-moniteur) **ou de fenêtre** (même cachée,
+- **3 à 8 pipettes** posées visuellement sur un screenshot, ou aux coordonnées
+- **Tolérance RVB** réglable (+/-0 à +/-128) pour s'adapter aux compressions de stream
+- **Compteur** avec +1 / -1 / réinitialisation et réarmement manuel
+- **Préréglages** par jeu / Pokémon avec couleur d'accent personnalisable
+- **Capture d'écran complet** (multi-moniteur) **ou de fenêtre** (même cachée,
   via `PrintWindow` sur Windows)
-- 📊 **Historique par session** (chaque cycle Start/Stop) avec durée + paginé
-- 📝 **Journal de notes** paginé, suppression et restauration de compteur
-- 🌐 **Overlay HTTP** pour OBS : ajoute `http://127.0.0.1:7878/` en Browser
-  Source pour afficher le compteur (texte brut) sur la diffusion
-- 🌍 **Français / Anglais** auto-détecté, modifiable en direct
-- 🎨 **Couleur d'accent** détectée automatiquement (couleur Windows / macOS)
-- 💾 **Sauvegarde automatique** atomique de la configuration
+- **Historique par session** (chaque cycle Start/Stop) avec durée + paginé
+- **Journal de notes** paginé, suppression et restauration de compteur
+- **Overlay HTTP** pour OBS : ajoute `http://127.0.0.1:7878/` en Browser
+  Source pour afficher le compteur sur la diffusion
+- **Français / Anglais** auto-détecté, modifiable en direct
+- **Couleur d'accent** détectée automatiquement (couleur Windows / macOS)
+- **Sauvegarde automatique** atomique de la configuration
 
 ### Installation
 
@@ -52,7 +52,7 @@ Récupère le binaire pour ta plateforme depuis la
 
 | Plateforme        | Fichier                                         |
 | ----------------- | ----------------------------------------------- |
-| Windows x86_64    | `ShinyCounter-<version>-windows-x86_64.zip`     |
+| Windows x86_64    | `ShinyCounter-<version>-windows-x86_64.exe`     |
 | macOS Apple Silicon | `ShinyCounter-<version>-macos-aarch64.dmg`    |
 | macOS Intel       | `ShinyCounter-<version>-macos-x86_64.dmg`       |
 | Linux x86_64      | `ShinyCounter-<version>-linux-x86_64.tar.gz`    |
@@ -87,7 +87,7 @@ sudo apt install libxkbcommon-dev libgtk-3-dev libxcb1-dev libx11-dev \
 3. Clique **Valider** : les pipettes sont posées, leurs couleurs cibles
    enregistrées dans le préréglage actif.
 4. Ajuste **Intervalle** (durée entre deux échantillonnages, défaut 100 ms) et
-   **Tolérance ±RVB** (défaut 20).
+   **Tolérance +/-RVB** (défaut 20).
 5. Clique **Démarrer la surveillance**. Le compteur s'incrémente dès qu'une
    rencontre est détectée.
 6. Pour OBS : active **serveur HTTP** dans la section Overlay et ajoute
@@ -109,12 +109,12 @@ machines, ou le supprimer pour repartir à zéro.
 
 ---
 
-## 🇬🇧 Overview (English)
+## Overview (English)
 
 ### What it does
 
-When hunting a shiny Pokémon — on Switch, GBA, an emulator, anything you
-stream — you run **hundreds, sometimes thousands of soft resets**. Counting
+When hunting a shiny Pokémon - on Switch, GBA, an emulator, anything you
+stream - you run **hundreds, sometimes thousands of soft resets**. Counting
 manually is painful, and OCR on the screen is brittle.
 
 Shiny Counter **reads the colour of a few pixels on your screen** (3 to 8
@@ -125,20 +125,20 @@ different colour** (i.e. the encounter screen has gone away).
 
 ### Features
 
-- 🎯 3 to 8 pickers, placed visually on a screenshot or by raw coordinates
-- 🧪 RGB tolerance (±0 to ±128) to handle stream compression artifacts
-- 🔁 Counter with +1 / -1 / reset and manual rearm
-- 📚 Per-game / per-Pokémon presets with a custom accent colour
-- 🪟 Capture from a **monitor** or any **window** (even occluded — uses
+- 3 to 8 pickers, placed visually on a screenshot or by raw coordinates
+- RGB tolerance (+/-0 to +/-128) to handle stream compression artifacts
+- Counter with +1 / -1 / reset and manual rearm
+- Per-game / per-Pokémon presets with a custom accent colour
+- Capture from a **monitor** or any **window** (even occluded - uses
   `PrintWindow` on Windows)
-- 📊 History grouped by **session** (each Start/Stop cycle) with duration and
+- History grouped by **session** (each Start/Stop cycle) with duration and
   pagination
-- 📝 Paginated note journal, with per-entry delete and counter restore
-- 🌐 Built-in **HTTP overlay** for OBS: drop
+- Paginated note journal, with per-entry delete and counter restore
+- Built-in **HTTP overlay** for OBS: drop
   `http://127.0.0.1:7878/` into a Browser Source to display the count
-- 🌍 French / English UI, picked from settings
-- 🎨 Accent colour auto-detected from your OS (Windows / macOS)
-- 💾 Atomic JSON config save
+- French / English UI, picked from settings
+- Accent colour auto-detected from your OS (Windows / macOS)
+- Atomic JSON config save
 
 ### Install
 
@@ -169,7 +169,7 @@ sudo apt install libxkbcommon-dev libgtk-3-dev libxcb1-dev libx11-dev \
    pixel.
 3. Click **Apply**: the pickers are stored on the active preset.
 4. Tune the **Interval** (sampling cadence, default 100 ms) and **Tolerance
-   ±RGB** (default 20).
+   +/-RGB** (default 20).
 5. Click **Start watching**. The counter bumps whenever an encounter is
    detected.
 6. For OBS: enable the **HTTP server** in the Overlay section, then add
@@ -192,13 +192,13 @@ Copy it between machines, back it up, or delete it to start fresh.
 
 ## Technical notes
 
-- **Sampling cost** is O(pickers) per tick — typically 3 reads per second at
-  default interval. The app captures a full frame, then reads 3 pixels and
+- **Sampling cost** is O(pickers) per tick - typically 10 captures per second
+  at the default interval. The app captures a full frame, then reads 3 pixels and
   drops the frame. Memory footprint stays small even after hours.
 - **Background HTTP** runs in a single dedicated worker thread and is joined
   on shutdown.
 - History caps: 500 sessions per preset, 10 000 hits per session, 500 entries
-  in the journal — older entries are dropped automatically.
+  in the journal - older entries are dropped automatically.
 - Counter state machine has full **unit + integration test coverage**
   (`cargo test`).
 - CI runs `cargo fmt --check`, `cargo clippy -D warnings` and the full test
@@ -214,12 +214,12 @@ Pushing to `main` triggers the [release workflow](.github/workflows/release.yml)
 2. Generates a Conventional-Commits style changelog.
 3. Builds matrix targets (Linux x86_64 / aarch64, Windows x86_64, macOS
    x86_64 / Apple Silicon).
-4. Packages a `.tar.gz` / `.zip` / `.dmg` per platform.
+4. Packages a `.tar.gz` / `.exe` / `.dmg` per platform.
 5. Uploads everything to a fresh GitHub Release and publishes it.
 
 ## License
 
-[MIT](LICENSE) © DylanBricar.
+[MIT](LICENSE) DylanBricar.
 
 Pokémon is a trademark of Nintendo / Game Freak. This project is unaffiliated
 and provided for the streaming / speedrun community.

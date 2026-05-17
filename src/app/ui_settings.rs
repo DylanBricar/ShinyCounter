@@ -56,7 +56,7 @@ impl ShinyApp {
                     .add(
                         egui::TextEdit::singleline(&mut notes)
                             .desired_width(220.0)
-                            .margin(egui::Margin::symmetric(10.0, 10.0))
+                            .margin(egui::Margin::symmetric(10, 10))
                             .font(egui::TextStyle::Button)
                             .hint_text(self.s().preset_notes),
                     )
@@ -90,7 +90,7 @@ impl ShinyApp {
                     .add(
                         egui::TextEdit::singleline(&mut port_buf)
                             .desired_width(80.0)
-                            .margin(egui::Margin::symmetric(10.0, 10.0))
+                            .margin(egui::Margin::symmetric(10, 10))
                             .font(egui::TextStyle::Button),
                     )
                     .changed()
@@ -120,7 +120,7 @@ impl ShinyApp {
                         egui::TextEdit::singleline(&mut url_mut)
                             .font(egui::TextStyle::Monospace)
                             .desired_width(240.0)
-                            .margin(egui::Margin::symmetric(10.0, 10.0)),
+                            .margin(egui::Margin::symmetric(10, 10)),
                     );
                     if ghost_button(ui, self.s().copy).clicked() {
                         ui.ctx().copy_text(url.clone());
@@ -169,7 +169,7 @@ impl ShinyApp {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut path_str)
                         .desired_width(280.0)
-                        .margin(egui::Margin::symmetric(10.0, 10.0))
+                        .margin(egui::Margin::symmetric(10, 10))
                         .font(egui::TextStyle::Button)
                         .hint_text(self.s().file_output_path),
                 );
@@ -231,7 +231,7 @@ impl ShinyApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.note_buf)
                         .desired_width((avail - 110.0).max(180.0))
-                        .margin(egui::Margin::symmetric(10.0, 10.0))
+                        .margin(egui::Margin::symmetric(10, 10))
                         .font(egui::TextStyle::Button)
                         .hint_text(hint),
                 );
@@ -293,7 +293,7 @@ impl ShinyApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if icon_button(ui, "×", BAD)
+                                    if icon_button(ui, "x", BAD)
                                         .on_hover_text(self.s().delete_entry)
                                         .clicked()
                                     {
@@ -318,7 +318,7 @@ impl ShinyApp {
                 let val = self.config.log[i].count_at_event;
                 self.active_mut().count = val;
                 self.mark_dirty();
-                self.write_output_file();
+                self.broadcast_state();
             }
             if pages > 1 {
                 ui.add_space(6.0);

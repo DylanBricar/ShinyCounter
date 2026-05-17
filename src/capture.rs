@@ -17,8 +17,8 @@ pub fn list_sources() -> Vec<SourceInfo> {
             let name = m.name().unwrap_or_else(|_| format!("monitor {i}"));
             let w = m.width().unwrap_or(0);
             let h = m.height().unwrap_or(0);
-            let label = format!("[Écran {i}] {name} — {w}×{h}");
-            let short_label = format!("Écran {i} ({w}×{h})");
+            let label = format!("[Écran {i}] {name} - {w}x{h}");
+            let short_label = format!("Écran {i} ({w}x{h})");
             out.push(SourceInfo {
                 source: CaptureSource::Monitor { index: i },
                 label,
@@ -37,7 +37,7 @@ pub fn list_sources() -> Vec<SourceInfo> {
             }
             let app = w.app_name().unwrap_or_default();
             let id = w.id().unwrap_or(0);
-            let label = format!("[Fenêtre] {app} — {}", truncate(&title, 60));
+            let label = format!("[Fenêtre] {app} - {}", truncate(&title, 60));
             let short_label = if !app.trim().is_empty() {
                 format!("Fenêtre: {}", truncate(&app, 22))
             } else {
@@ -58,7 +58,7 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         let cut: String = s.chars().take(max - 1).collect();
-        format!("{cut}…")
+        format!("{cut}...")
     }
 }
 
@@ -83,10 +83,15 @@ pub fn capture_monitor(index: usize) -> Result<RgbaImage> {
 
 pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaImage> {
     let windows = Window::all()?;
-    // xcap 0.6 returns Result from accessors — collect them once and match.
+    // xcap 0.6 returns Result from accessors. Keep the persisted title/app
+    // hints in the match so an OS-level window id reuse cannot silently point
+    // the counter at an unrelated window.
     let resolved = windows
         .iter()
-        .find(|w| w.id().ok() == Some(id))
+        .find(|w| {
+            w.id().ok() == Some(id)
+                && (field_matches(w.app_name(), app_hint) || field_matches(w.title(), title_hint))
+        })
         .or_else(|| {
             windows.iter().find(|w| {
                 w.title().as_deref().ok() == Some(title_hint)
@@ -100,6 +105,10 @@ pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaI
         })
         .ok_or_else(|| anyhow!("window not found (id {id}, title \"{title_hint}\")"))?;
     Ok(resolved.capture_image()?)
+}
+
+fn field_matches<E>(value: Result<String, E>, hint: &str) -> bool {
+    !hint.trim().is_empty() && value.as_deref().ok() == Some(hint)
 }
 
 pub fn sample_color(img: &RgbaImage, x: i32, y: i32) -> Option<Color> {

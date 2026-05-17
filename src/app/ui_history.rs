@@ -92,11 +92,11 @@ impl ShinyApp {
         let stroke_col = if is_open { GOOD } else { BORDER };
 
         let mut toggle = false;
-        egui::Frame::none()
+        egui::Frame::NONE
             .fill(bg)
             .stroke(egui::Stroke::new(1.0, stroke_col))
-            .rounding(egui::Rounding::same(10.0))
-            .inner_margin(egui::Margin::same(12.0))
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let arrow = if is_expanded { "-" } else { "+" };
@@ -106,7 +106,7 @@ impl ShinyApp {
                         )
                         .fill(BG)
                         .stroke(egui::Stroke::new(1.0, BORDER))
-                        .rounding(egui::Rounding::same(6.0))
+                        .corner_radius(egui::CornerRadius::same(6))
                         .min_size(egui::vec2(28.0, 28.0)),
                     );
                     if arrow_resp.hovered() {

@@ -85,7 +85,7 @@ impl ShinyApp {
                     self.broadcast_state();
                 }
                 if self.config.presets.len() > 1
-                    && icon_button(ui, "×", BAD)
+                    && icon_button(ui, "x", BAD)
                         .on_hover_text(self.s().delete_preset)
                         .clicked()
                 {
@@ -142,7 +142,7 @@ impl ShinyApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.rename_buf)
                             .desired_width(200.0)
-                            .margin(egui::Margin::symmetric(10.0, 10.0))
+                            .margin(egui::Margin::symmetric(10, 10))
                             .font(egui::TextStyle::Button)
                             .hint_text(hint),
                     );

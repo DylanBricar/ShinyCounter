@@ -82,19 +82,25 @@ pub fn spawn_check(channel: UpdateChannel) {
         return;
     }
     channel.set(UpdateStatus::Checking);
-    let _ = thread::Builder::new()
+    let worker_channel = channel.clone();
+    if let Err(e) = thread::Builder::new()
         .name("shiny-counter-update".into())
         .spawn(move || match fetch_latest() {
-            Ok(release) => channel.set(decide(release)),
-            Err(e) => channel.set(UpdateStatus::Error(e.to_string())),
-        });
+            Ok(release) => worker_channel.set(decide(release)),
+            Err(e) => worker_channel.set(UpdateStatus::Error(e.to_string())),
+        })
+    {
+        channel.set(UpdateStatus::Error(format!(
+            "could not start update check: {e}"
+        )));
+    }
 }
 
 /// Spawn a thread that streams the platform-matching asset to the user's
 /// Downloads folder, reporting percentage progress as it goes.
 ///
 /// A second concurrent call while another download is already in flight is
-/// silently ignored — the existing worker keeps going.
+/// silently ignored - the existing worker keeps going.
 pub fn spawn_download(channel: UpdateChannel, info: UpdateInfo) {
     if matches!(
         channel.status(),
@@ -106,7 +112,8 @@ pub fn spawn_download(channel: UpdateChannel, info: UpdateInfo) {
         info: info.clone(),
         percent: 0,
     });
-    let _ = thread::Builder::new()
+    let failure_channel = channel.clone();
+    if let Err(e) = thread::Builder::new()
         .name("shiny-counter-download".into())
         .spawn({
             let info = info.clone();
@@ -120,7 +127,12 @@ pub fn spawn_download(channel: UpdateChannel, info: UpdateInfo) {
                 Ok(path) => channel.set(UpdateStatus::Downloaded { info, path }),
                 Err(e) => channel.set(UpdateStatus::Error(e.to_string())),
             }
-        });
+        })
+    {
+        failure_channel.set(UpdateStatus::Error(format!(
+            "could not start download: {e}"
+        )));
+    }
 }
 
 fn decide(latest: ReleaseDto) -> UpdateStatus {
@@ -226,10 +238,11 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
     let dir = dirs::download_dir()
         .or_else(dirs::cache_dir)
         .unwrap_or_else(std::env::temp_dir);
-    let target_path = dir.join(&asset.name);
+    let file_name = safe_asset_file_name(&asset.name);
+    let target_path = dir.join(&file_name);
     // Write to a `.partial` sidecar so a stale or locked target file can't
     // wedge the download. We rename atomically on success.
-    let tmp_path = dir.join(format!("{}.partial", &asset.name));
+    let tmp_path = dir.join(format!("{file_name}.partial"));
     let _ = std::fs::remove_file(&tmp_path);
 
     let agent = ureq::AgentBuilder::new()
@@ -296,6 +309,26 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
     Ok(target_path)
 }
 
+fn safe_asset_file_name(name: &str) -> String {
+    let leaf = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let cleaned: String = leaf
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches(|c| c == '.' || c == ' ').to_string();
+    if cleaned.is_empty() {
+        "shiny-counter-update".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Open a downloaded file with the OS default handler.
 ///
 /// On Windows we directly spawn an `.exe` instead of routing through
@@ -313,7 +346,7 @@ pub fn open_path(path: &Path) -> Result<()> {
         if is_exe {
             std::process::Command::new(path).spawn()?;
         } else {
-            // No shell parsing — every argument is passed straight through
+            // No shell parsing - every argument is passed straight through
             // to CreateProcess, with Rust quoting any embedded whitespace.
             std::process::Command::new("explorer.exe")
                 .arg(path)
@@ -399,5 +432,15 @@ mod tests {
             let p = picked.expect("expected an asset for this host");
             assert!(p.name.ends_with(s), "got {}", p.name);
         }
+    }
+
+    #[test]
+    fn safe_asset_file_name_strips_paths_and_unsafe_chars() {
+        assert_eq!(
+            safe_asset_file_name("../nested\\ShinyCounter-1.2.3.exe"),
+            "ShinyCounter-1.2.3.exe"
+        );
+        assert_eq!(safe_asset_file_name("...\u{0000}"), "_");
+        assert_eq!(safe_asset_file_name("../"), "shiny-counter-update");
     }
 }

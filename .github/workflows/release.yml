@@ -11,7 +11,7 @@ permissions:
 
 # Serialize release runs so the second one waits for the first to finish.
 # Without this, two concurrent workflows can both create drafts, race on the
-# tag bump, or — worse — have one's "clean up stale drafts" step delete the
+# tag bump, or - worse - have one's "clean up stale drafts" step delete the
 # release the other is still uploading assets to, which surfaces as a
 # 404 Not Found during the asset upload step.
 concurrency:
@@ -19,7 +19,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-validate-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-validate-
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libudev-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            libegl-dev \
+            libgbm-dev \
+            libdrm-dev \
+            libxcb1-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libwayland-dev \
+            libpipewire-0.3-dev \
+            libdbus-1-dev \
+            libclang-dev \
+            clang \
+            pkg-config
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all
+
   create-release:
+    needs: validate
     runs-on: ubuntu-latest
     outputs:
       release-id: ${{ steps.create-release.outputs.result }}
@@ -44,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Make sure we have every tag locally — checkout may only fetch
+          # Make sure we have every tag locally - checkout may only fetch
           # the default branch refs.
           git fetch --tags origin --prune --force || true
           # Highest v*.*.* tag, sorted numerically across the three components.
@@ -73,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists locally — bumping logic was wrong" >&2
+            echo "Tag $TAG already exists locally - bumping logic was wrong" >&2
             exit 1
           fi
           git tag -a "$TAG" -m "Release $TAG"
@@ -190,7 +247,7 @@ jobs:
             artifact_glob: "target/aarch64-apple-darwin/release/shiny_counter"
             asset_name: "ShinyCounter-${VERSION}-macos-aarch64.dmg"
             archive_kind: macapp
-          # Intel macOS is cross-compiled from an Apple Silicon runner — the
+          # Intel macOS is cross-compiled from an Apple Silicon runner - the
           # dedicated `macos-13` (Intel) image is being phased out and its
           # queue can stall jobs for 10+ minutes. macOS ships a universal
           # toolchain so this Just Works.
@@ -221,7 +278,7 @@ jobs:
             const v = process.env.VERSION;
             const file = 'Cargo.toml';
             const original = fs.readFileSync(file, 'utf8');
-            // Replace only the first `version = "..."` line — that's the
+            // Replace only the first `version = "..."` line - that's the
             // [package] one. We don't want to touch any dep version.
             const updated = original.replace(/^version = "[^"]*"/m, `version = "${v}"`);
             fs.writeFileSync(file, updated);
@@ -276,7 +333,7 @@ jobs:
         # package version on first build.
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Stage artifact (Unix tarball — binary only)
+      - name: Stage artifact (Unix tarball - binary only)
         if: matrix.archive_kind == 'tar'
         shell: bash
         env:
@@ -286,7 +343,7 @@ jobs:
         run: |
           set -eux
           OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
-          # Bundle just the binary, nothing else — README / LICENSE live on
+          # Bundle just the binary, nothing else - README / LICENSE live on
           # the GitHub repo page.
           STAGE_DIR=$(mktemp -d)
           cp "$SRC" "$STAGE_DIR/shiny_counter"
@@ -306,7 +363,7 @@ jobs:
         run: |
           $version = $env:VERSION
           $outName = $env:OUT.Replace('${VERSION}', $version)
-          # Upload the .exe straight — no zip, no README, no LICENSE.
+          # Upload the .exe straight - no zip, no README, no LICENSE.
           Copy-Item $env:SRC -Destination $outName -Force
           "ASSET_PATH=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
           "ASSET_NAME=$outName" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -328,8 +385,8 @@ jobs:
           cp "$SRC" "$APP_DIR/Contents/MacOS/shiny_counter"
           chmod +x "$APP_DIR/Contents/MacOS/shiny_counter"
 
-          # ---- Pokéball iconset → icon.icns -----------------------------------
-          # The build script wrote a 1024×1024 PNG into OUT_DIR. The path is
+          # ---- Pokéball iconset -> icon.icns -----------------------------------
+          # The build script wrote a 1024x1024 PNG into OUT_DIR. The path is
           # target/<triple>/release/build/shiny_counter-<hash>/out/icon-1024.png
           ICON_SRC=$(find "target/$TARGET/release/build" -name 'icon-1024.png' | head -1)
           if [ -n "$ICON_SRC" ] && [ -f "$ICON_SRC" ]; then
@@ -350,7 +407,7 @@ jobs:
             rm -rf "$ICONSET"
             ICON_PLIST="<key>CFBundleIconFile</key><string>icon</string>"
           else
-            echo "No icon-1024.png found — bundle will use the system default."
+            echo "No icon-1024.png found - bundle will use the system default."
             ICON_PLIST=""
           fi
 

@@ -182,7 +182,7 @@ const FR: Strings = Strings {
     remove_slot_tip: "Supprimer cette pipette",
     sample: "Échantillon",
     interval: "Intervalle",
-    tolerance: "Tolérance ±RVB",
+    tolerance: "Tolérance +/-RVB",
     preset_notes: "Notes",
     obs_overlay: "Overlay OBS",
     live_http: "serveur HTTP",
@@ -193,7 +193,7 @@ const FR: Strings = Strings {
     clear_log: "Vider",
     no_entries: "Aucune entrée pour le moment.",
     add_note: "Ajouter",
-    note_hint: "Ajoute une note (ex. « Wailord classique, reset »)",
+    note_hint: "Ajoute une note (ex. \"Wailord classique, reset\")",
     history: "Historique des resets",
     no_hits: "Aucun reset enregistré pour ce préréglage.",
     since_previous: "depuis le précédent",
@@ -207,14 +207,14 @@ const FR: Strings = Strings {
     placed: "placé(s)",
     slot_active: "actif",
     slots: "Emplacements",
-    empty: "— vide",
+    empty: "- vide",
     manual_rearm: "Réarmé manuellement.",
     watching_msg: "Surveillance toutes les",
     pick_cancelled: "Sélection annulée.",
     capture_error: "Erreur de capture",
     picker_oob: "pipette hors écran",
     save_failed: "échec sauvegarde",
-    match_count: "Shiny détecté — compteur =",
+    match_count: "Shiny détecté - compteur =",
     rearmed: "Réarmé (sortie de l'écran shiny).",
     paste_hex: "Hex (#RRGGBB)",
     source_monitor: "Écran",
@@ -253,14 +253,14 @@ const FR: Strings = Strings {
     confirm_delete_picker_msg: "La position et la couleur cible de cette pipette seront effacées.",
     time_to: "à",
     update_check: "Vérifier les mises à jour",
-    update_checking: "Vérification…",
+    update_checking: "Vérification...",
     update_uptodate: "À jour",
     update_available_title: "Mise à jour disponible",
     update_available_msg:
         "Une nouvelle version de Shiny Counter est disponible. Tu peux ouvrir la page GitHub pour télécharger l'installeur correspondant à ton système.",
     update_open: "Ouvrir GitHub",
     update_download: "Télécharger",
-    update_downloading: "Téléchargement…",
+    update_downloading: "Téléchargement...",
     update_downloaded_title: "Téléchargement terminé",
     update_downloaded_msg: "L'installeur a été enregistré dans ton dossier Téléchargements. Ferme Shiny Counter, puis ouvre le fichier pour installer la nouvelle version. Tes préréglages et ton historique sont conservés (config stockée dans %APPDATA%\\ShinyCounter).",
     update_open_file: "Ouvrir le fichier",
@@ -276,27 +276,27 @@ const FR: Strings = Strings {
     file_output: "Sortie fichier",
     file_output_enabled: "Activée",
     file_output_path: "Chemin du fichier",
-    file_output_browse: "Parcourir…",
+    file_output_browse: "Parcourir...",
     file_output_clear: "Effacer",
     info_file_output:
-        "Écrit le compteur (nombre seul) dans un fichier texte à chaque incrément. Pointe une OBS « Source de texte (depuis un fichier) » dessus pour afficher le compteur sans serveur HTTP. L'écriture est atomique : les lecteurs voient toujours une valeur cohérente.",
+        "Écrit le compteur (nombre seul) dans un fichier texte à chaque incrément. Pointe une OBS \"Source de texte (depuis un fichier)\" dessus pour afficher le compteur sans serveur HTTP. L'écriture est atomique : les lecteurs voient toujours une valeur cohérente.",
     info_server_style:
         "Si coché, l'URL renvoie une page HTML stylisée qui se met à jour toute seule (idéal pour OBS Browser Source). Sinon, l'URL renvoie juste le nombre brut en texte.",
     file_output_error: "Échec d'écriture du fichier",
     info_obs_overlay:
-        "Petit serveur HTTP local (127.0.0.1) qui sert le compteur. Ajoute http://127.0.0.1:7878/ comme Browser Source dans OBS pour afficher le numéro sur ton stream — la page se rafraîchit toute seule 4×/seconde.",
+        "Petit serveur HTTP local (127.0.0.1) qui sert le compteur. Ajoute http://127.0.0.1:7878/ comme Browser Source dans OBS pour afficher le numéro sur ton stream. La page se met à jour en long-polling.",
     info_tolerance:
-        "Tolérance ±RVB pour le matching pixel. ±0 = correspondance exacte, ±20 (défaut) = bon compromis pour les streams compressés, ±50+ pour les vidéos très bruitées.",
+        "Tolérance +/-RVB pour le matching pixel. +/-0 = correspondance exacte, +/-20 (défaut) = bon compromis pour les streams compressés, +/-50+ pour les vidéos très bruitées.",
     info_interval:
         "Intervalle entre deux échantillonnages (en millisecondes). 100 ms = 10 lectures/seconde, suffisant pour la plupart des jeux. Augmente si tu utilises beaucoup de CPU.",
     info_source:
-        "Choisis l'écran à surveiller, ou directement une fenêtre — la capture par fenêtre fonctionne même si la fenêtre est cachée derrière une autre (utile pour les émulateurs en arrière-plan).",
+        "Choisis l'écran à surveiller, ou directement une fenêtre. La capture par fenêtre fonctionne même si la fenêtre est cachée derrière une autre (utile pour les émulateurs en arrière-plan).",
     info_accent:
         "Couleur d'accent du préréglage. Par défaut, on prend celle du système d'exploitation. Tu peux la personnaliser par préréglage pour repérer rapidement la chasse active.",
     info_armed:
         "ARMÉ = le compteur peut s'incrémenter au prochain match. VERROUILLÉ = en attente que toutes les pipettes voient une couleur différente avant de pouvoir compter à nouveau. Évite les doublons sur un écran qui ne change pas.",
     info_session:
-        "Une session débute quand tu cliques sur « Démarrer la surveillance » et se termine au stop. Chaque hit (rencontre détectée) est rattaché à la session en cours.",
+        "Une session débute quand tu cliques sur \"Démarrer la surveillance\" et se termine au stop. Chaque hit (rencontre détectée) est rattaché à la session en cours.",
     info_pick:
         "Capture un screenshot de la source choisie, puis clique 3 fois dessus pour placer les pipettes. Chaque clic enregistre la couleur du pixel ciblé comme cible à matcher.",
     info_auto_update:
@@ -330,7 +330,7 @@ const EN: Strings = Strings {
     remove_slot_tip: "Remove this picker",
     sample: "Sample",
     interval: "Interval",
-    tolerance: "Tolerance ±RGB",
+    tolerance: "Tolerance +/-RGB",
     preset_notes: "Notes",
     obs_overlay: "OBS overlay",
     live_http: "live HTTP",
@@ -355,14 +355,14 @@ const EN: Strings = Strings {
     placed: "placed",
     slot_active: "active",
     slots: "Slots",
-    empty: "— empty",
+    empty: "- empty",
     manual_rearm: "Manually rearmed.",
     watching_msg: "Watching every",
     pick_cancelled: "Pick cancelled.",
     capture_error: "Capture error",
     picker_oob: "picker out of bounds",
     save_failed: "save failed",
-    match_count: "Match — count =",
+    match_count: "Match - count =",
     rearmed: "Rearmed (screen left shiny state).",
     paste_hex: "Hex (#RRGGBB)",
     source_monitor: "Screen",
@@ -401,14 +401,14 @@ const EN: Strings = Strings {
     confirm_delete_picker_msg: "The position and target color of this picker will be erased.",
     time_to: "to",
     update_check: "Check for updates",
-    update_checking: "Checking…",
+    update_checking: "Checking...",
     update_uptodate: "Up to date",
     update_available_title: "Update available",
     update_available_msg:
         "A new version of Shiny Counter is available. Open the GitHub release page to download the installer for your platform.",
     update_open: "Open GitHub",
     update_download: "Download",
-    update_downloading: "Downloading…",
+    update_downloading: "Downloading...",
     update_downloaded_title: "Download complete",
     update_downloaded_msg: "The installer has been saved to your Downloads folder. Close Shiny Counter, then open the file to install the new version. Your presets and history are preserved (config lives in %APPDATA%\\ShinyCounter).",
     update_open_file: "Open file",
@@ -424,7 +424,7 @@ const EN: Strings = Strings {
     file_output: "File output",
     file_output_enabled: "Enabled",
     file_output_path: "File path",
-    file_output_browse: "Browse…",
+    file_output_browse: "Browse...",
     file_output_clear: "Clear",
     info_file_output:
         "Writes the counter (just the number) to a text file every time it changes. Point an OBS \"Text from file\" source at it for a no-server overlay. Writes are atomic so readers always see a consistent value.",
@@ -432,19 +432,19 @@ const EN: Strings = Strings {
         "When checked, the URL serves a styled HTML page that auto-refreshes (perfect for an OBS Browser Source). Otherwise the URL returns just the raw count as plain text.",
     file_output_error: "File write failed",
     info_obs_overlay:
-        "Tiny local HTTP server (127.0.0.1) serving the counter. Add http://127.0.0.1:7878/ as an OBS Browser Source — the page polls itself 4 times per second so the number updates live.",
+        "Tiny local HTTP server (127.0.0.1) serving the counter. Add http://127.0.0.1:7878/ as an OBS Browser Source. The page updates through long-polling.",
     info_tolerance:
-        "RGB tolerance for pixel matching. ±0 = exact match, ±20 (default) is a good fit for compressed streams, ±50+ for noisy footage.",
+        "RGB tolerance for pixel matching. +/-0 = exact match, +/-20 (default) is a good fit for compressed streams, +/-50+ for noisy footage.",
     info_interval:
         "Sampling cadence in milliseconds. 100 ms = 10 reads/second, enough for most games. Raise it if CPU usage is a concern.",
     info_source:
-        "Pick a monitor to watch, or a specific window — window capture keeps working even if the window is hidden behind another (useful for background emulators).",
+        "Pick a monitor to watch, or a specific window. Window capture keeps working even if the window is hidden behind another (useful for background emulators).",
     info_accent:
         "Preset accent color. Defaults to the OS accent. Override it per preset to spot the current hunt at a glance.",
     info_armed:
         "ARMED = the counter can fire on the next match. LOCKED = waiting for all pickers to read a different color before it can count again. Prevents double-counts on a static encounter screen.",
     info_session:
-        "A session opens when you press “Start watching” and closes on stop. Every hit (detected encounter) belongs to the active session.",
+        "A session opens when you press \"Start watching\" and closes on stop. Every hit (detected encounter) belongs to the active session.",
     info_pick:
         "Captures a screenshot of the chosen source, then prompts you to click 3 spots. Each click records that pixel's color as a target to match.",
     info_auto_update:
