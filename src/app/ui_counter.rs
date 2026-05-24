@@ -88,7 +88,9 @@ impl ShinyApp {
                     let c = self.active().active_group().count.saturating_sub(1);
                     self.active_mut().active_group_mut().count = c;
                     self.active_mut().count = self.active().total_count();
-                    if let Some(w) = &self.capture_worker { w.set_count(gi, c); }
+                    if let Some(w) = &self.capture_worker {
+                        w.set_count(gi, c);
+                    }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -100,7 +102,9 @@ impl ShinyApp {
                     let c = self.active().active_group().count.saturating_add(1);
                     self.active_mut().active_group_mut().count = c;
                     self.active_mut().count = self.active().total_count();
-                    if let Some(w) = &self.capture_worker { w.set_count(gi, c); }
+                    if let Some(w) = &self.capture_worker {
+                        w.set_count(gi, c);
+                    }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -139,7 +143,11 @@ impl ShinyApp {
                 );
                 pill(
                     ui,
-                    &format!("{}/{}", self.active().active_group().pickers.len(), MAX_PICKERS),
+                    &format!(
+                        "{}/{}",
+                        self.active().active_group().pickers.len(),
+                        MAX_PICKERS
+                    ),
                     accent,
                     accent,
                 );
@@ -152,7 +160,10 @@ impl ShinyApp {
                 let can_add = self.active().active_group().pickers.len() < MAX_PICKERS;
                 ui.add_enabled_ui(can_add, |ui| {
                     if ghost_button(ui, self.s().add_slot).clicked() {
-                        self.active_mut().active_group_mut().pickers.push(PickerPoint::default());
+                        self.active_mut()
+                            .active_group_mut()
+                            .pickers
+                            .push(PickerPoint::default());
                         let i = self.active().active_group().pickers.len() - 1;
                         self.hex_buf.insert(i, "#000000".into());
                         self.mark_dirty();
@@ -197,7 +208,11 @@ impl ShinyApp {
                 let group_name = self.active().groups[gi].name.clone();
                 let group_count = self.active().groups[gi].count;
 
-                let tab_fill = if is_active { accent.linear_multiply(0.25) } else { SURFACE_2 };
+                let tab_fill = if is_active {
+                    accent.linear_multiply(0.25)
+                } else {
+                    SURFACE_2
+                };
                 let tab_stroke = if is_active {
                     egui::Stroke::new(1.5, accent)
                 } else {
@@ -207,10 +222,8 @@ impl ShinyApp {
                 let tab_color = if is_active { accent } else { TEXT_DIM };
 
                 // Build the tab as a horizontal group: [name  count] [x]
-                let (tab_rect, tab_resp) = ui.allocate_exact_size(
-                    egui::vec2(0.0, 0.0),
-                    egui::Sense::hover(),
-                );
+                let (tab_rect, tab_resp) =
+                    ui.allocate_exact_size(egui::vec2(0.0, 0.0), egui::Sense::hover());
                 let _ = (tab_rect, tab_resp);
 
                 ui.horizontal(|ui| {
@@ -224,7 +237,10 @@ impl ShinyApp {
                         .stroke(tab_stroke)
                         .corner_radius(if can_remove {
                             egui::CornerRadius {
-                                nw: 8, ne: 0, sw: 8, se: 0,
+                                nw: 8,
+                                ne: 0,
+                                sw: 8,
+                                se: 0,
                             }
                         } else {
                             egui::CornerRadius::same(8)
@@ -236,15 +252,17 @@ impl ShinyApp {
                     }
 
                     if can_remove {
-                        let x_btn = egui::Button::new(
-                            egui::RichText::new(" × ").color(BAD).size(12.0),
-                        )
-                        .fill(tab_fill)
-                        .stroke(tab_stroke)
-                        .corner_radius(egui::CornerRadius {
-                            nw: 0, ne: 8, sw: 0, se: 8,
-                        })
-                        .min_size(egui::vec2(0.0, 28.0));
+                        let x_btn =
+                            egui::Button::new(egui::RichText::new(" × ").color(BAD).size(12.0))
+                                .fill(tab_fill)
+                                .stroke(tab_stroke)
+                                .corner_radius(egui::CornerRadius {
+                                    nw: 0,
+                                    ne: 8,
+                                    sw: 0,
+                                    se: 8,
+                                })
+                                .min_size(egui::vec2(0.0, 28.0));
                         let x_resp = ui.add(x_btn).on_hover_text("Supprimer cette zone");
                         if x_resp.clicked() {
                             remove_zone = Some(gi);
@@ -269,7 +287,9 @@ impl ShinyApp {
         }
         if add_zone {
             let n = self.active().groups.len();
-            self.active_mut().groups.push(PickerGroup::new(format!("Zone {}", n + 1)));
+            self.active_mut()
+                .groups
+                .push(PickerGroup::new(format!("Zone {}", n + 1)));
             self.active_mut().active_group_index = n;
             self.sync_counters();
             self.sync_hex_buf();
@@ -282,7 +302,9 @@ impl ShinyApp {
                 self.active_mut().active_group_index = new_gi;
                 // Reseed worker counts in the correct order after the removal.
                 let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
-                if let Some(w) = &self.capture_worker { w.set_counts(&counts); }
+                if let Some(w) = &self.capture_worker {
+                    w.set_counts(&counts);
+                }
                 self.sync_hex_buf();
                 self.mark_dirty();
             }

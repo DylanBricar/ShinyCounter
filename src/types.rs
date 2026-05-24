@@ -171,13 +171,17 @@ impl Preset {
 
     /// Returns the active group, defaulting to index 0.
     pub fn active_group(&self) -> &PickerGroup {
-        let i = self.active_group_index.min(self.groups.len().saturating_sub(1));
+        let i = self
+            .active_group_index
+            .min(self.groups.len().saturating_sub(1));
         &self.groups[i]
     }
 
     /// Returns the active group mutably, defaulting to index 0.
     pub fn active_group_mut(&mut self) -> &mut PickerGroup {
-        let i = self.active_group_index.min(self.groups.len().saturating_sub(1));
+        let i = self
+            .active_group_index
+            .min(self.groups.len().saturating_sub(1));
         &mut self.groups[i]
     }
 

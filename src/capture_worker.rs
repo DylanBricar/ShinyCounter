@@ -103,7 +103,10 @@ impl CaptureWorker {
     pub fn update_config(&self, cfg: WorkerConfig) {
         let n = cfg.groups.len();
         *self.shared.config.lock() = cfg;
-        self.shared.counters.lock().resize_with(n, CounterState::default);
+        self.shared
+            .counters
+            .lock()
+            .resize_with(n, CounterState::default);
         self.shared.counts.lock().resize(n, 0);
         self.shared.live_samples.lock().resize_with(n, Vec::new);
     }
@@ -143,11 +146,21 @@ impl CaptureWorker {
     }
 
     pub fn live_samples(&self, gi: usize) -> Vec<Color> {
-        self.shared.live_samples.lock().get(gi).cloned().unwrap_or_default()
+        self.shared
+            .live_samples
+            .lock()
+            .get(gi)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn is_armed(&self, gi: usize) -> bool {
-        self.shared.counters.lock().get(gi).map(|c| c.is_armed()).unwrap_or(true)
+        self.shared
+            .counters
+            .lock()
+            .get(gi)
+            .map(|c| c.is_armed())
+            .unwrap_or(true)
     }
 
     pub fn count(&self, gi: usize) -> u32 {
@@ -193,7 +206,10 @@ fn worker_loop(shared: Arc<Shared>, source: CaptureSource) {
         let img = match capture(&source) {
             Ok(img) => img,
             Err(e) => {
-                shared.events.lock().push(SampleEvent::CaptureError(e.to_string()));
+                shared
+                    .events
+                    .lock()
+                    .push(SampleEvent::CaptureError(e.to_string()));
                 thread::sleep(Duration::from_millis(200));
                 continue;
             }
@@ -252,7 +268,10 @@ fn worker_loop(shared: Arc<Shared>, source: CaptureSource) {
 
             match evt {
                 CounterEvent::Incremented => {
-                    events.push(SampleEvent::Incremented { group_idx: gi, new_count: count });
+                    events.push(SampleEvent::Incremented {
+                        group_idx: gi,
+                        new_count: count,
+                    });
                 }
                 CounterEvent::Armed => {
                     events.push(SampleEvent::Armed { group_idx: gi });

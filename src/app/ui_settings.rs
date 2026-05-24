@@ -319,7 +319,9 @@ impl ShinyApp {
                 let gi = self.active().active_group_index;
                 self.active_mut().active_group_mut().count = val;
                 self.active_mut().count = self.active().total_count();
-                if let Some(w) = &self.capture_worker { w.set_count(gi, val); }
+                if let Some(w) = &self.capture_worker {
+                    w.set_count(gi, val);
+                }
                 self.mark_dirty();
                 self.broadcast_state();
             }

@@ -11,7 +11,13 @@ use shiny_counter::types::HitRecord;
 impl ShinyApp {
     pub(super) fn render_history(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            let total_hits: usize = self.active().active_group().sessions.iter().map(|s| s.hits.len()).sum();
+            let total_hits: usize = self
+                .active()
+                .active_group()
+                .sessions
+                .iter()
+                .map(|s| s.hits.len())
+                .sum();
             let n_sessions = self.active().active_group().sessions.len();
             let lang = self.config.language;
             ui.horizontal(|ui| {

@@ -189,7 +189,10 @@ impl ShinyApp {
     /// Whether the active group's counter is armed (delegates to worker).
     pub(super) fn active_counter_is_armed(&self) -> bool {
         let gi = self.active().active_group_index;
-        self.capture_worker.as_ref().map(|w| w.is_armed(gi)).unwrap_or(true)
+        self.capture_worker
+            .as_ref()
+            .map(|w| w.is_armed(gi))
+            .unwrap_or(true)
     }
 
     /// Reset the active group's counter state (delegates to worker).
@@ -245,9 +248,13 @@ impl ShinyApp {
     fn make_worker_config(&self) -> WorkerConfig {
         let preset = self.active();
         WorkerConfig {
-            groups: preset.groups.iter().map(|g| GroupConfig {
-                pickers: g.pickers.iter().map(|p| (p.x, p.y, p.target)).collect(),
-            }).collect(),
+            groups: preset
+                .groups
+                .iter()
+                .map(|g| GroupConfig {
+                    pickers: g.pickers.iter().map(|p| (p.x, p.y, p.target)).collect(),
+                })
+                .collect(),
             tolerance: preset.tolerance,
             interval_ms: preset.interval_ms.max(1),
         }
@@ -314,7 +321,9 @@ impl ShinyApp {
         }
 
         // Drain events produced by the worker thread.
-        let events = self.capture_worker.as_ref()
+        let events = self
+            .capture_worker
+            .as_ref()
             .map(|w| w.drain_events())
             .unwrap_or_default();
 
@@ -322,7 +331,10 @@ impl ShinyApp {
 
         for evt in events {
             match evt {
-                SampleEvent::Incremented { group_idx: gi, new_count: count } => {
+                SampleEvent::Incremented {
+                    group_idx: gi,
+                    new_count: count,
+                } => {
                     // Sync persisted count from worker.
                     if let Some(g) = self.active_mut().groups.get_mut(gi) {
                         g.count = count;
@@ -468,7 +480,10 @@ impl ShinyApp {
         let stamp = format_local_now(self.config.language);
         let preset_idx = self.active_idx();
         let gi = self.config.presets[preset_idx].active_group_index;
-        if let Some(last) = self.config.presets[preset_idx].groups[gi].sessions.last_mut() {
+        if let Some(last) = self.config.presets[preset_idx].groups[gi]
+            .sessions
+            .last_mut()
+        {
             if last.is_open() {
                 last.ended_at_epoch = Some(now);
                 last.ended_at = Some(stamp);
@@ -705,8 +720,17 @@ mod tests {
         let changed = close_open_sessions_from_previous_run(&mut config);
 
         assert!(changed);
-        assert_eq!(config.presets[0].groups[0].sessions[0].ended_at_epoch, Some(10));
-        assert_eq!(config.presets[0].groups[0].sessions[1].ended_at_epoch, Some(25));
-        assert!(config.presets[0].groups[0].sessions.iter().all(|s| !s.is_open()));
+        assert_eq!(
+            config.presets[0].groups[0].sessions[0].ended_at_epoch,
+            Some(10)
+        );
+        assert_eq!(
+            config.presets[0].groups[0].sessions[1].ended_at_epoch,
+            Some(25)
+        );
+        assert!(config.presets[0].groups[0]
+            .sessions
+            .iter()
+            .all(|s| !s.is_open()));
     }
 }
