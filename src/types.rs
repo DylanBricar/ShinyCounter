@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MIN_PICKERS: usize = 1;
 pub const MAX_PICKERS: usize = 8;
+pub const MAX_GROUPS: usize = 8;
 pub const DEFAULT_INTERVAL_MS: u64 = 100;
 pub const DEFAULT_TOLERANCE: u8 = 20;
 
@@ -70,68 +71,27 @@ impl SessionRecord {
     }
 }
 
+/// An independent sampling zone within a preset. Each group has its own
+/// pickers (screen coordinates), its own counter, and its own session history.
+/// Groups are evaluated independently: a match in group A never affects group B.
+/// Future: each group may own its own CaptureSource for true multi-screen hunting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Preset {
+pub struct PickerGroup {
     pub name: String,
     pub pickers: Vec<PickerPoint>,
-    pub tolerance: u8,
-    pub interval_ms: u64,
     pub count: u32,
-    pub notes: String,
-    #[serde(default)]
-    pub hits: Vec<HitRecord>, // legacy field, kept for migration
     #[serde(default)]
     pub sessions: Vec<SessionRecord>,
-    #[serde(default)]
-    pub accent_color: Option<Color>,
-    /// Optional path of a plain-text file where the counter is mirrored on
-    /// every change. Lets the user point an OBS Text Source (or any
-    /// external reader) at it.
-    #[serde(default)]
-    pub output_file: Option<std::path::PathBuf>,
-    #[serde(default)]
-    pub output_file_enabled: bool,
 }
 
-impl Preset {
+impl PickerGroup {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            // Start with 3 pickers by default (typical shiny signature); user can
-            // remove down to 1 via the per-row x button.
             pickers: vec![PickerPoint::default(); 3],
-            tolerance: DEFAULT_TOLERANCE,
-            interval_ms: DEFAULT_INTERVAL_MS,
             count: 0,
-            notes: String::new(),
-            hits: Vec::new(),
             sessions: Vec::new(),
-            accent_color: None,
-            output_file: None,
-            output_file_enabled: false,
         }
-    }
-
-    /// Migrate legacy `hits` field into a single archived session if needed.
-    pub fn migrate_hits(&mut self) {
-        if self.hits.is_empty() {
-            return;
-        }
-        // Bundle legacy hits into one closed "archive" session so the user keeps
-        // their history.
-        let started = self.hits.first().map(|h| h.epoch_secs).unwrap_or(0);
-        let ended = self.hits.last().map(|h| h.epoch_secs).unwrap_or(started);
-        let session = SessionRecord {
-            started_at_epoch: started,
-            started_at: String::new(),
-            ended_at_epoch: Some(ended),
-            ended_at: None,
-            hits: std::mem::take(&mut self.hits),
-        };
-        // Place archive before any new sessions so chronological order is preserved.
-        let mut combined = vec![session];
-        combined.append(&mut self.sessions);
-        self.sessions = combined;
     }
 
     pub fn normalize(&mut self) {
@@ -140,11 +100,6 @@ impl Preset {
         } else if self.pickers.len() > MAX_PICKERS {
             self.pickers.truncate(MAX_PICKERS);
         }
-        if self.interval_ms < 50 {
-            self.interval_ms = 50;
-        }
-        self.migrate_hits();
-        // Cap stored history so a long-running app cannot grow unbounded.
         const MAX_SESSIONS: usize = 500;
         const MAX_HITS_PER_SESSION: usize = 10_000;
         if self.sessions.len() > MAX_SESSIONS {
@@ -157,6 +112,138 @@ impl Preset {
                 s.hits.drain(0..extra);
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Preset {
+    pub name: String,
+    /// Legacy flat pickers — kept for JSON back-compat. Migrated into
+    /// `groups[0]` on first load when `groups` is absent/empty.
+    #[serde(default)]
+    pub pickers: Vec<PickerPoint>,
+    pub tolerance: u8,
+    pub interval_ms: u64,
+    /// Legacy flat counter — kept for JSON back-compat. Migrated into
+    /// `groups[0].count` on first load when `groups` is absent/empty.
+    pub count: u32,
+    pub notes: String,
+    #[serde(default)]
+    pub hits: Vec<HitRecord>, // legacy field, kept for migration
+    /// Legacy flat sessions — kept for JSON back-compat. Migrated into
+    /// `groups[0].sessions` on first load when `groups` is absent/empty.
+    #[serde(default)]
+    pub sessions: Vec<SessionRecord>,
+    #[serde(default)]
+    pub accent_color: Option<Color>,
+    #[serde(default)]
+    pub output_file: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub output_file_enabled: bool,
+    /// Independent sampling zones. Each group tracks its own count and sessions.
+    /// When empty on load, the legacy `pickers`/`count`/`sessions` fields are
+    /// migrated into a single "Zone 1" group automatically.
+    #[serde(default)]
+    pub groups: Vec<PickerGroup>,
+    /// Index of the group currently displayed/edited in the UI.
+    #[serde(default)]
+    pub active_group_index: usize,
+}
+
+impl Preset {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            pickers: Vec::new(),
+            tolerance: DEFAULT_TOLERANCE,
+            interval_ms: DEFAULT_INTERVAL_MS,
+            count: 0,
+            notes: String::new(),
+            hits: Vec::new(),
+            sessions: Vec::new(),
+            accent_color: None,
+            output_file: None,
+            output_file_enabled: false,
+            groups: vec![PickerGroup::new("Zone 1")],
+            active_group_index: 0,
+        }
+    }
+
+    /// Returns the active group, defaulting to index 0.
+    pub fn active_group(&self) -> &PickerGroup {
+        let i = self.active_group_index.min(self.groups.len().saturating_sub(1));
+        &self.groups[i]
+    }
+
+    /// Returns the active group mutably, defaulting to index 0.
+    pub fn active_group_mut(&mut self) -> &mut PickerGroup {
+        let i = self.active_group_index.min(self.groups.len().saturating_sub(1));
+        &mut self.groups[i]
+    }
+
+    /// Total count across all groups (for display/server).
+    pub fn total_count(&self) -> u32 {
+        self.groups.iter().map(|g| g.count).sum()
+    }
+
+    /// Migrate legacy `hits` field into a single archived session if needed.
+    pub fn migrate_hits(&mut self) {
+        if self.hits.is_empty() {
+            return;
+        }
+        let started = self.hits.first().map(|h| h.epoch_secs).unwrap_or(0);
+        let ended = self.hits.last().map(|h| h.epoch_secs).unwrap_or(started);
+        let session = SessionRecord {
+            started_at_epoch: started,
+            started_at: String::new(),
+            ended_at_epoch: Some(ended),
+            ended_at: None,
+            hits: std::mem::take(&mut self.hits),
+        };
+        let mut combined = vec![session];
+        combined.append(&mut self.sessions);
+        self.sessions = combined;
+    }
+
+    /// Migrate legacy flat pickers/count/sessions into groups[0] if groups is empty.
+    pub fn migrate_to_groups(&mut self) {
+        if !self.groups.is_empty() {
+            return;
+        }
+        let pickers = std::mem::take(&mut self.pickers);
+        let count = self.count;
+        let sessions = std::mem::take(&mut self.sessions);
+        let mut g = PickerGroup::new("Zone 1");
+        g.pickers = if pickers.is_empty() {
+            vec![PickerPoint::default(); 3]
+        } else {
+            pickers
+        };
+        g.count = count;
+        g.sessions = sessions;
+        self.groups = vec![g];
+        self.active_group_index = 0;
+    }
+
+    pub fn normalize(&mut self) {
+        self.migrate_hits();
+        self.migrate_to_groups();
+        if self.interval_ms < 1 {
+            self.interval_ms = 1;
+        }
+        if self.groups.is_empty() {
+            self.groups.push(PickerGroup::new("Zone 1"));
+        } else if self.groups.len() > MAX_GROUPS {
+            self.groups.truncate(MAX_GROUPS);
+        }
+        if self.active_group_index >= self.groups.len() {
+            self.active_group_index = 0;
+        }
+        for g in &mut self.groups {
+            g.normalize();
+        }
+        // Keep legacy count field in sync with active group for server/overlay compat.
+        self.count = self.total_count();
     }
 }
 

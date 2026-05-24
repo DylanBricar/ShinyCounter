@@ -11,8 +11,8 @@ use shiny_counter::types::HitRecord;
 impl ShinyApp {
     pub(super) fn render_history(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            let total_hits: usize = self.active().sessions.iter().map(|s| s.hits.len()).sum();
-            let n_sessions = self.active().sessions.len();
+            let total_hits: usize = self.active().active_group().sessions.iter().map(|s| s.hits.len()).sum();
+            let n_sessions = self.active().active_group().sessions.len();
             let lang = self.config.language;
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(self.s().history).size(15.0).strong());
@@ -36,7 +36,7 @@ impl ShinyApp {
                     if ghost_button(ui, label).clicked() {
                         self.show_history = !self.show_history;
                     }
-                    if !self.active().sessions.is_empty()
+                    if !self.active().active_group().sessions.is_empty()
                         && ghost_button(ui, self.s().clear_history).clicked()
                     {
                         self.pending_confirm = PendingConfirm::ClearHistory;
@@ -47,7 +47,7 @@ impl ShinyApp {
                 return;
             }
             ui.add_space(6.0);
-            if self.active().sessions.is_empty() {
+            if self.active().active_group().sessions.is_empty() {
                 ui.label(
                     egui::RichText::new(self.s().no_sessions)
                         .color(TEXT_DIM)
@@ -58,7 +58,7 @@ impl ShinyApp {
             let lang = self.config.language;
             let accent = self.accent32();
             // Iterate sessions most recent first.
-            let n = self.active().sessions.len();
+            let n = self.active().active_group().sessions.len();
             for rev_idx in 0..n {
                 let idx = n - 1 - rev_idx;
                 self.render_session_block(ui, idx, lang, accent);
@@ -76,7 +76,7 @@ impl ShinyApp {
         // Pull just the scalars / strings we need - the full session may carry
         // thousands of hits, cloning it every frame would be wasteful.
         let (total, duration, started, ended, is_open) = {
-            let s = &self.active().sessions[idx];
+            let s = &self.active().active_group().sessions[idx];
             (
                 s.hits.len(),
                 format_delta(s.duration_secs()),
@@ -174,7 +174,7 @@ impl ShinyApp {
                         let end = (start + PAGE_SIZE).min(total);
                         // Clone only the visible page rather than the whole
                         // session's hit list.
-                        let hits_page: Vec<HitRecord> = self.active().sessions[idx]
+                        let hits_page: Vec<HitRecord> = self.active().active_group().sessions[idx]
                             .hits
                             .iter()
                             .rev()

@@ -2,8 +2,8 @@ use super::helpers::{epoch_now, format_local_now, write_atomic};
 use crate::theme;
 use eframe::egui;
 use image::RgbaImage;
-use shiny_counter::capture::{capture, list_sources, sample_color, SourceInfo};
-use shiny_counter::counter::{CounterEvent, CounterState};
+use shiny_counter::capture::{capture, list_sources, SourceInfo};
+use shiny_counter::capture_worker::{CaptureWorker, GroupConfig, SampleEvent, WorkerConfig};
 use shiny_counter::i18n;
 use shiny_counter::os_accent;
 use shiny_counter::server::CounterServer;
@@ -46,9 +46,15 @@ pub(super) enum PendingConfirm {
 
 pub struct ShinyApp {
     pub(super) config: Config,
-    pub(super) counter: CounterState,
+    /// One CounterState per PickerGroup in the active preset.
+    /// Rebuilt whenever the active preset or its group count changes.
+    /// Background capture thread — always running when sampling is active.
+    /// Replaced when the capture source changes.
+    pub(super) capture_worker: Option<CaptureWorker>,
+    /// Tracks the last known active preset index so ensure_capture_worker can
+    /// detect preset switches and reseed counts accordingly.
+    pub(super) worker_preset_index: usize,
     pub(super) running: bool,
-    pub(super) last_tick: Instant,
     pub(super) last_sample: Vec<Color>,
     pub(super) status: String,
     pub(super) server: Option<CounterServer>,
@@ -82,18 +88,20 @@ pub struct ShinyApp {
 fn close_open_sessions_from_previous_run(config: &mut Config) -> bool {
     let mut changed = false;
     for preset in &mut config.presets {
-        for session in &mut preset.sessions {
-            if session.is_open() {
-                if let Some(hit) = session.hits.last() {
-                    session.ended_at_epoch = Some(hit.epoch_secs);
-                    session.ended_at = Some(hit.timestamp.clone());
-                } else {
-                    session.ended_at_epoch = Some(session.started_at_epoch);
-                    if !session.started_at.is_empty() {
-                        session.ended_at = Some(session.started_at.clone());
+        for group in &mut preset.groups {
+            for session in &mut group.sessions {
+                if session.is_open() {
+                    if let Some(hit) = session.hits.last() {
+                        session.ended_at_epoch = Some(hit.epoch_secs);
+                        session.ended_at = Some(hit.timestamp.clone());
+                    } else {
+                        session.ended_at_epoch = Some(session.started_at_epoch);
+                        if !session.started_at.is_empty() {
+                            session.ended_at = Some(session.started_at.clone());
+                        }
                     }
+                    changed = true;
                 }
-                changed = true;
             }
         }
     }
@@ -113,9 +121,9 @@ impl ShinyApp {
         let mut app = Self {
             status: initial_status,
             config,
-            counter: CounterState::default(),
+            capture_worker: None,
+            worker_preset_index: usize::MAX,
             running: false,
-            last_tick: Instant::now() - Duration::from_secs(10),
             last_sample: Vec::new(),
             server: None,
             server_error: None,
@@ -173,9 +181,36 @@ impl ShinyApp {
         &mut self.config.presets[i]
     }
 
+    /// Ensure `counters` has exactly one entry per group in the active preset.
+    /// Called when the preset switches or groups are added/removed.
+    /// No-op kept for call sites that used to resize counters — worker manages its own now.
+    pub(super) fn sync_counters(&mut self) {}
+
+    /// Whether the active group's counter is armed (delegates to worker).
+    pub(super) fn active_counter_is_armed(&self) -> bool {
+        let gi = self.active().active_group_index;
+        self.capture_worker.as_ref().map(|w| w.is_armed(gi)).unwrap_or(true)
+    }
+
+    /// Reset the active group's counter state (delegates to worker).
+    pub(super) fn active_counter_reset(&mut self) {
+        let gi = self.active().active_group_index;
+        if let Some(w) = &self.capture_worker {
+            w.reset_counter(gi);
+        }
+    }
+
+    /// Reset all groups' counter states (delegates to worker).
+    pub(super) fn reset_all_counters(&mut self) {
+        if let Some(w) = &self.capture_worker {
+            w.reset_counters();
+        }
+    }
+
     pub(super) fn sync_hex_buf(&mut self) {
         let snapshot: Vec<(usize, String)> = self
             .active()
+            .active_group()
             .pickers
             .iter()
             .enumerate()
@@ -206,73 +241,121 @@ impl ShinyApp {
         self.last_save = Instant::now();
     }
 
-    pub(super) fn tick(&mut self, ctx: &egui::Context) {
-        ctx.request_repaint_after(Duration::from_millis(80));
-        if !self.running {
-            return;
+    /// Build a WorkerConfig from the active preset's current state.
+    fn make_worker_config(&self) -> WorkerConfig {
+        let preset = self.active();
+        WorkerConfig {
+            groups: preset.groups.iter().map(|g| GroupConfig {
+                pickers: g.pickers.iter().map(|p| (p.x, p.y, p.target)).collect(),
+            }).collect(),
+            tolerance: preset.tolerance,
+            interval_ms: preset.interval_ms.max(1),
         }
-        let interval = Duration::from_millis(self.active().interval_ms.max(50));
-        if self.last_tick.elapsed() < interval {
-            return;
-        }
-        self.last_tick = Instant::now();
+    }
 
-        let img = match capture(&self.config.capture) {
-            Ok(i) => i,
-            Err(e) => {
-                self.status = format!("{}: {e}", self.s().capture_error);
-                self.running = false;
-                self.close_session();
-                self.last_sample.clear();
-                self.mark_dirty();
-                return;
+    /// Ensure the background sampler worker is running, pointed at the current
+    /// source, and has an up-to-date config. Replaces the worker on source change.
+    /// Reseeds counts and drains stale events on preset switch.
+    pub(super) fn ensure_capture_worker(&mut self) {
+        let current_preset = self.active_idx();
+        let preset_changed = current_preset != self.worker_preset_index;
+
+        let needs_new = self
+            .capture_worker
+            .as_ref()
+            .map(|w| w.source_changed(&self.config.capture))
+            .unwrap_or(true);
+
+        let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
+
+        if needs_new {
+            let cfg = self.make_worker_config();
+            let worker = CaptureWorker::start(self.config.capture.clone(), cfg);
+            worker.set_counts(&counts);
+            self.capture_worker = Some(worker);
+            self.worker_preset_index = current_preset;
+        } else if let Some(w) = &self.capture_worker {
+            if preset_changed {
+                // Drain events from the previous preset so they don't bleed into the new one.
+                w.drain_events();
+                // Reseed counts from the newly active preset.
+                w.set_counts(&counts);
+                self.worker_preset_index = current_preset;
             }
-        };
-        // Sample without cloning the full Preset (which carries the whole
-        // session history).
-        let n_pickers = self.active().pickers.len();
-        let tolerance = self.active().tolerance;
-        let mut samples: Vec<Color> = Vec::with_capacity(n_pickers);
-        let mut targets: Vec<Color> = Vec::with_capacity(n_pickers);
-        for i in 0..n_pickers {
-            let p = self.active().pickers[i];
-            match sample_color(&img, p.x, p.y) {
-                Some(c) => {
-                    samples.push(c);
-                    targets.push(p.target);
+            // Push updated config every frame — cheap Mutex write, worker picks it up.
+            w.update_config(self.make_worker_config());
+        }
+    }
+
+    /// Drain events from the worker and apply them to app state.
+    /// This is the only place counters/counts are mutated from UI side.
+    pub(super) fn tick(&mut self, ctx: &egui::Context) {
+        if !self.running {
+            // Kill the worker when not sampling — avoids continuous screen capture
+            // and the spinning cursor on macOS.
+            if self.capture_worker.is_some() {
+                self.capture_worker = None;
+                self.last_sample.clear();
+            }
+            ctx.request_repaint_after(Duration::from_millis(80));
+            return;
+        }
+
+        // Start/keep the worker only while actively sampling.
+        self.ensure_capture_worker();
+
+        // Repaint frequently enough to drain events without perceptible lag.
+        ctx.request_repaint_after(Duration::from_millis(16));
+
+        // Update live_sample for active group display.
+        if let Some(w) = &self.capture_worker {
+            let gi = self.active().active_group_index;
+            self.last_sample = w.live_samples(gi);
+        }
+
+        // Drain events produced by the worker thread.
+        let events = self.capture_worker.as_ref()
+            .map(|w| w.drain_events())
+            .unwrap_or_default();
+
+        let mut any_incremented = false;
+
+        for evt in events {
+            match evt {
+                SampleEvent::Incremented { group_idx: gi, new_count: count } => {
+                    // Sync persisted count from worker.
+                    if let Some(g) = self.active_mut().groups.get_mut(gi) {
+                        g.count = count;
+                    }
+                    self.active_mut().count = self.active().total_count();
+                    let gi_str = if self.active().groups.len() > 1 {
+                        format!(" (Zone {})", gi + 1)
+                    } else {
+                        String::new()
+                    };
+                    self.status = format!("{} {count}{gi_str}", self.s().match_count);
+                    self.record_hit_group(gi, count);
+                    self.mark_dirty();
+                    any_incremented = true;
                 }
-                None => {
-                    self.status = format!("{} #{} ({},{})", self.s().picker_oob, i + 1, p.x, p.y);
+                SampleEvent::Armed { group_idx: gi } => {
+                    if gi == self.active().active_group_index {
+                        self.status = self.s().rearmed.into();
+                    }
+                }
+                SampleEvent::CaptureError(e) => {
+                    self.status = format!("{}: {e}", self.s().capture_error);
+                    self.running = false;
+                    self.close_all_sessions();
+                    self.last_sample.clear();
+                    self.mark_dirty();
                     return;
                 }
             }
         }
-        self.last_sample = samples;
 
-        let mut count = self.active().count;
-        let evt = self
-            .counter
-            .tick(&self.last_sample, &targets, tolerance, &mut count);
-        self.active_mut().count = count;
-
-        match evt {
-            CounterEvent::Incremented => {
-                self.status = format!("{} {count}", self.s().match_count);
-                self.record_hit(count);
-                self.mark_dirty();
-            }
-            CounterEvent::Armed => {
-                self.status = self.s().rearmed.into();
-            }
-            CounterEvent::None => {}
-        }
-
-        // Always push the latest state to the HTTP server (cheap in-memory
-        // update - keeps `is_armed`, count, and preset name live for
-        // /count, /count.txt, and /poll). The file write is more expensive
-        // and only fires when the count actually moves.
         self.push_server_state();
-        if matches!(evt, CounterEvent::Incremented) {
+        if any_incremented {
             self.write_output_file();
         }
     }
@@ -290,23 +373,21 @@ impl ShinyApp {
     pub(super) fn push_server_state(&mut self) {
         if let Some(s) = &self.server {
             s.update(
-                self.active().count,
+                self.active().total_count(),
                 self.active().name.clone(),
-                self.counter.is_armed(),
+                self.active_counter_is_armed(),
                 self.config.server_styled,
             );
         }
     }
 
     pub(super) fn write_output_file(&mut self) {
-        // Snapshot the values we need under an immutable borrow, then release
-        // it so the status update below can take a mutable borrow if needed.
         let (enabled, path, count) = {
             let preset = self.active();
             (
                 preset.output_file_enabled,
                 preset.output_file.clone(),
-                preset.count,
+                preset.total_count(),
             )
         };
         if !enabled {
@@ -323,14 +404,15 @@ impl ShinyApp {
         }
     }
 
-    pub(super) fn record_hit(&mut self, count: u32) {
+    /// Record a hit in a specific group's session history.
+    pub(super) fn record_hit_group(&mut self, group_idx: usize, count: u32) {
         let now = epoch_now();
         let lang = self.config.language;
-        let preset = self.active_mut();
-        // Ensure an open session exists.
-        let need_open = preset.sessions.last().map(|s| !s.is_open()).unwrap_or(true);
+        let preset_idx = self.active_idx();
+        let group = &mut self.config.presets[preset_idx].groups[group_idx];
+        let need_open = group.sessions.last().map(|s| !s.is_open()).unwrap_or(true);
         if need_open {
-            preset.sessions.push(SessionRecord {
+            group.sessions.push(SessionRecord {
                 started_at_epoch: now,
                 started_at: format_local_now(lang),
                 ended_at_epoch: None,
@@ -338,34 +420,41 @@ impl ShinyApp {
                 hits: Vec::new(),
             });
         }
-        let session = preset.sessions.last_mut().expect("session pushed above");
+        let session = group.sessions.last_mut().expect("session pushed above");
         let prev = session
             .hits
             .last()
             .map(|h| h.epoch_secs)
             .unwrap_or(session.started_at_epoch);
         let delta = (now - prev).max(0);
-        let rec = HitRecord {
+        session.hits.push(HitRecord {
             timestamp: format_local_now(lang),
             epoch_secs: now,
             delta_secs: delta,
             index: count,
-        };
-        session.hits.push(rec);
+        });
+    }
+
+    /// Record a hit in the active group (convenience wrapper).
+    #[allow(dead_code)]
+    pub(super) fn record_hit(&mut self, count: u32) {
+        let gi = self.active().active_group_index;
+        self.record_hit_group(gi, count);
     }
 
     pub(super) fn open_session(&mut self) {
         let now = epoch_now();
         let stamp = format_local_now(self.config.language);
-        let preset = self.active_mut();
-        // Close any orphan open session first.
-        if let Some(last) = preset.sessions.last_mut() {
+        let preset_idx = self.active_idx();
+        let gi = self.config.presets[preset_idx].active_group_index;
+        let group = &mut self.config.presets[preset_idx].groups[gi];
+        if let Some(last) = group.sessions.last_mut() {
             if last.is_open() {
                 last.ended_at_epoch = Some(now);
                 last.ended_at = Some(stamp.clone());
             }
         }
-        preset.sessions.push(SessionRecord {
+        group.sessions.push(SessionRecord {
             started_at_epoch: now,
             started_at: stamp,
             ended_at_epoch: None,
@@ -377,10 +466,28 @@ impl ShinyApp {
     pub(super) fn close_session(&mut self) {
         let now = epoch_now();
         let stamp = format_local_now(self.config.language);
-        if let Some(last) = self.active_mut().sessions.last_mut() {
+        let preset_idx = self.active_idx();
+        let gi = self.config.presets[preset_idx].active_group_index;
+        if let Some(last) = self.config.presets[preset_idx].groups[gi].sessions.last_mut() {
             if last.is_open() {
                 last.ended_at_epoch = Some(now);
                 last.ended_at = Some(stamp);
+            }
+        }
+    }
+
+    /// Close the open session in every group of the active preset.
+    /// Used when the capture source fails — all groups stop together.
+    pub(super) fn close_all_sessions(&mut self) {
+        let now = epoch_now();
+        let stamp = format_local_now(self.config.language);
+        let preset_idx = self.active_idx();
+        for group in &mut self.config.presets[preset_idx].groups {
+            if let Some(last) = group.sessions.last_mut() {
+                if last.is_open() {
+                    last.ended_at_epoch = Some(now);
+                    last.ended_at = Some(stamp.clone());
+                }
             }
         }
     }
@@ -414,9 +521,9 @@ impl ShinyApp {
             Ok(s) => {
                 self.server_error = None;
                 s.update(
-                    self.active().count,
+                    self.active().total_count(),
                     self.active().name.clone(),
-                    self.counter.is_armed(),
+                    self.active_counter_is_armed(),
                     self.config.server_styled,
                 );
                 self.server = Some(s);
@@ -432,7 +539,7 @@ impl ShinyApp {
         let entry = LogEntry {
             timestamp: format_local_now(self.config.language),
             preset_name: self.active().name.clone(),
-            count_at_event: self.active().count,
+            count_at_event: self.active().total_count(),
             note,
         };
         self.config.log.insert(0, entry);
@@ -450,7 +557,7 @@ impl ShinyApp {
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, raw);
                 let texture =
                     ctx.load_texture("pick_capture", color_image, egui::TextureOptions::LINEAR);
-                let n = self.active().pickers.len();
+                let n = self.active().active_group().pickers.len();
                 self.mode = Mode::Picking(PickSession {
                     image: img,
                     texture,
@@ -483,7 +590,7 @@ impl ShinyApp {
                 pickers.push(PickerPoint::default());
             }
         }
-        self.active_mut().pickers = pickers;
+        self.active_mut().active_group_mut().pickers = pickers;
         self.sync_hex_buf();
         self.mark_dirty();
         self.status = format!(
@@ -554,7 +661,7 @@ mod tests {
     #[test]
     fn previous_empty_open_sessions_are_closed_to_their_start_time() {
         let mut config = Config::default();
-        config.presets[0].sessions.push(SessionRecord {
+        config.presets[0].groups[0].sessions.push(SessionRecord {
             started_at_epoch: 123,
             started_at: "start".into(),
             ended_at_epoch: None,
@@ -565,7 +672,7 @@ mod tests {
         let changed = close_open_sessions_from_previous_run(&mut config);
 
         assert!(changed);
-        let session = &config.presets[0].sessions[0];
+        let session = &config.presets[0].groups[0].sessions[0];
         assert_eq!(session.ended_at_epoch, Some(123));
         assert!(!session.is_open());
     }
@@ -573,7 +680,7 @@ mod tests {
     #[test]
     fn all_previous_open_sessions_are_closed() {
         let mut config = Config::default();
-        config.presets[0].sessions = vec![
+        config.presets[0].groups[0].sessions = vec![
             SessionRecord {
                 started_at_epoch: 10,
                 started_at: "first".into(),
@@ -598,8 +705,8 @@ mod tests {
         let changed = close_open_sessions_from_previous_run(&mut config);
 
         assert!(changed);
-        assert_eq!(config.presets[0].sessions[0].ended_at_epoch, Some(10));
-        assert_eq!(config.presets[0].sessions[1].ended_at_epoch, Some(25));
-        assert!(config.presets[0].sessions.iter().all(|s| !s.is_open()));
+        assert_eq!(config.presets[0].groups[0].sessions[0].ended_at_epoch, Some(10));
+        assert_eq!(config.presets[0].groups[0].sessions[1].ended_at_epoch, Some(25));
+        assert!(config.presets[0].groups[0].sessions.iter().all(|s| !s.is_open()));
     }
 }

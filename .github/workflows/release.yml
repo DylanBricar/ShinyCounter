@@ -376,6 +376,12 @@ jobs:
           SRC: ${{ matrix.artifact_glob }}
           OUT: ${{ matrix.asset_name }}
           TARGET: ${{ matrix.target }}
+          # Optional: set these secrets in GitHub → Settings → Secrets to enable
+          # full notarization. Without them, ad-hoc signing is used instead.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euxo pipefail
           OUT_NAME=$(echo "$OUT" | sed "s/\${VERSION}/$VERSION/")
@@ -432,7 +438,43 @@ jobs:
           </plist>
           EOF
 
-          # Build a basic .dmg containing the .app
+          # Write entitlements — required for Screen Recording permission on macOS 10.15+.
+          # Without these, Gatekeeper rejects the app as "damaged" even with a valid signature.
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0"><dict>' \
+            '  <key>com.apple.security.cs.allow-jit</key><false/>' \
+            '  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><false/>' \
+            '  <key>com.apple.security.cs.disable-library-validation</key><true/>' \
+            '  <key>com.apple.security.cs.allow-dyld-environment-variables</key><false/>' \
+            '</dict></plist>' \
+            > entitlements.plist
+
+          # ---- Code signing ---------------------------------------------------
+          # If APPLE_SIGNING_IDENTITY secret is set, use the real Developer ID.
+          # Otherwise fall back to ad-hoc signing (-) which still removes the
+          # "damaged" quarantine block when users run: xattr -cr ShinyCounter.app
+          SIGN_ID="${APPLE_SIGNING_IDENTITY:--}"
+          codesign --deep --force --options runtime \
+            --entitlements entitlements.plist \
+            --sign "$SIGN_ID" \
+            "$APP_DIR"
+          codesign --verify --deep --strict "$APP_DIR"
+
+          # ---- Notarization (only when Apple credentials are available) --------
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ "$SIGN_ID" != "-" ]; then
+            # Create a zip for submission (notarytool doesn't accept .app directly)
+            ditto -c -k --keepParent "$APP_DIR" "${APP_DIR%.app}-notarize.zip"
+            xcrun notarytool submit "${APP_DIR%.app}-notarize.zip" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            rm -f "${APP_DIR%.app}-notarize.zip"
+          fi
+
+          # Build a .dmg containing the .app
           DMG_STAGE="dmg-stage"
           rm -rf "$DMG_STAGE"
           mkdir -p "$DMG_STAGE"
@@ -440,6 +482,15 @@ jobs:
           ln -s /Applications "$DMG_STAGE/Applications" || true
           hdiutil create -volname "Shiny Counter" -srcfolder "$DMG_STAGE" \
             -ov -format UDZO "$OUT_NAME"
+
+          # Sign the DMG itself so Gatekeeper accepts the outer container too.
+          codesign --force --sign "$SIGN_ID" "$OUT_NAME"
+
+          # Staple notarization ticket to DMG if notarization ran.
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ "$SIGN_ID" != "-" ]; then
+            xcrun stapler staple "$OUT_NAME" || true
+          fi
+
           echo "ASSET_PATH=$OUT_NAME" >> "$GITHUB_ENV"
           echo "ASSET_NAME=$OUT_NAME" >> "$GITHUB_ENV"
 

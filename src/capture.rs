@@ -62,6 +62,7 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Full-screen capture — used only for the picker UI (one-shot, not hot path).
 pub fn capture(source: &CaptureSource) -> Result<RgbaImage> {
     match source {
         CaptureSource::Monitor { index } => capture_monitor(*index),
@@ -83,9 +84,6 @@ pub fn capture_monitor(index: usize) -> Result<RgbaImage> {
 
 pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaImage> {
     let windows = Window::all()?;
-    // xcap 0.6 returns Result from accessors. Keep the persisted title/app
-    // hints in the match so an OS-level window id reuse cannot silently point
-    // the counter at an unrelated window.
     let resolved = windows
         .iter()
         .find(|w| {
@@ -109,6 +107,44 @@ pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaI
 
 fn field_matches<E>(value: Result<String, E>, hint: &str) -> bool {
     !hint.trim().is_empty() && value.as_deref().ok() == Some(hint)
+}
+
+/// Sample a single pixel from a source without allocating a full-screen image.
+/// On monitors: uses `capture_region(x, y, 1, 1)` — only transfers 4 bytes.
+/// On windows: captures the full window then reads the pixel (window capture
+/// doesn't support partial regions in xcap 0.6).
+pub fn sample_pixel(source: &CaptureSource, x: i32, y: i32) -> Result<Option<Color>> {
+    if x < 0 || y < 0 {
+        return Ok(None);
+    }
+    let (ux, uy) = (x as u32, y as u32);
+    match source {
+        CaptureSource::Monitor { index } => {
+            let monitors = Monitor::all()?;
+            let mon = monitors
+                .get(*index)
+                .or_else(|| monitors.first())
+                .ok_or_else(|| anyhow!("monitor {index} not available"))?;
+            let w = mon.width().unwrap_or(0);
+            let h = mon.height().unwrap_or(0);
+            if ux >= w || uy >= h {
+                return Ok(None);
+            }
+            // 1×1 region — only 4 bytes transferred from the GPU/framebuffer.
+            let img = mon.capture_region(ux, uy, 1, 1)?;
+            Ok(img.get_pixel_checked(0, 0).map(|p| Color {
+                r: p.0[0],
+                g: p.0[1],
+                b: p.0[2],
+            }))
+        }
+        CaptureSource::Window { id, title, app } => {
+            // Window capture doesn't support partial regions in xcap 0.6;
+            // capture the full window and read the pixel.
+            let img = capture_window(*id, title, app)?;
+            Ok(sample_color(&img, x, y))
+        }
+    }
 }
 
 pub fn sample_color(img: &RgbaImage, x: i32, y: i32) -> Option<Color> {

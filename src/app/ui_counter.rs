@@ -6,22 +6,28 @@ use crate::theme::{
 };
 use eframe::egui;
 use shiny_counter::i18n::parse_hex;
-use shiny_counter::types::{Color, PickerPoint, MAX_PICKERS, MIN_PICKERS};
-use std::time::{Duration, Instant};
+use shiny_counter::types::{Color, PickerGroup, PickerPoint, MAX_GROUPS, MAX_PICKERS, MIN_PICKERS};
 
 impl ShinyApp {
     pub(super) fn render_counter_card(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(2.0);
+                let n_groups = self.active().groups.len();
+                let label = if n_groups > 1 {
+                    let gi = self.active().active_group_index;
+                    format!("{} — Zone {}", self.s().encounters, gi + 1)
+                } else {
+                    self.s().encounters.to_string()
+                };
                 ui.label(
-                    egui::RichText::new(self.s().encounters)
+                    egui::RichText::new(label)
                         .color(TEXT_DIM)
                         .size(12.0)
                         .strong(),
                 );
                 ui.add_space(6.0);
-                let count = self.active().count;
+                let count = self.active().active_group().count;
                 ui.label(
                     egui::RichText::new(format!("{count}"))
                         .color(TEXT)
@@ -32,7 +38,7 @@ impl ShinyApp {
                 ui.vertical_centered(|ui| {
                     ui.horizontal(|ui| {
                         ui.add_space((ui.available_width() - 110.0).max(0.0) * 0.5);
-                        if self.counter.is_armed() {
+                        if self.active_counter_is_armed() {
                             pill_dot(ui, self.s().armed, GOOD, GOOD);
                         } else {
                             pill_dot(ui, self.s().locked, WARN, WARN);
@@ -52,7 +58,6 @@ impl ShinyApp {
                 if colored_button(ui, label, fill, stroke).clicked() {
                     self.running = !self.running;
                     if self.running {
-                        self.last_tick = Instant::now() - Duration::from_secs(10);
                         self.open_session();
                         self.status = format!(
                             "{} {:.2}s",
@@ -79,8 +84,11 @@ impl ShinyApp {
                     .add_sized([bw, 36.0], egui::Button::new("-1").corner_radius(10))
                     .clicked()
                 {
-                    let c = self.active().count.saturating_sub(1);
-                    self.active_mut().count = c;
+                    let gi = self.active().active_group_index;
+                    let c = self.active().active_group().count.saturating_sub(1);
+                    self.active_mut().active_group_mut().count = c;
+                    self.active_mut().count = self.active().total_count();
+                    if let Some(w) = &self.capture_worker { w.set_count(gi, c); }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -88,7 +96,11 @@ impl ShinyApp {
                     .add_sized([bw, 36.0], egui::Button::new("+1").corner_radius(10))
                     .clicked()
                 {
-                    self.active_mut().count = self.active().count.saturating_add(1);
+                    let gi = self.active().active_group_index;
+                    let c = self.active().active_group().count.saturating_add(1);
+                    self.active_mut().active_group_mut().count = c;
+                    self.active_mut().count = self.active().total_count();
+                    if let Some(w) = &self.capture_worker { w.set_count(gi, c); }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -105,7 +117,7 @@ impl ShinyApp {
             ui.add_space(6.0);
             ui.vertical_centered_justified(|ui| {
                 if ghost_button(ui, self.s().rearm).clicked() {
-                    self.counter.reset();
+                    self.active_counter_reset();
                     self.status = self.s().manual_rearm.into();
                 }
             });
@@ -115,6 +127,10 @@ impl ShinyApp {
     pub(super) fn render_pickers_card(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let accent = self.accent32();
         card(ui, |ui| {
+            // Zone tabs
+            self.render_zone_tabs(ui, accent);
+            ui.add_space(6.0);
+
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     egui::RichText::new(self.s().color_pickers)
@@ -123,7 +139,7 @@ impl ShinyApp {
                 );
                 pill(
                     ui,
-                    &format!("{}/{}", self.active().pickers.len(), MAX_PICKERS),
+                    &format!("{}/{}", self.active().active_group().pickers.len(), MAX_PICKERS),
                     accent,
                     accent,
                 );
@@ -133,18 +149,18 @@ impl ShinyApp {
                     self.begin_pick(ctx);
                 }
                 info_icon(ui, self.s().info_pick);
-                let can_add = self.active().pickers.len() < MAX_PICKERS;
+                let can_add = self.active().active_group().pickers.len() < MAX_PICKERS;
                 ui.add_enabled_ui(can_add, |ui| {
                     if ghost_button(ui, self.s().add_slot).clicked() {
-                        self.active_mut().pickers.push(PickerPoint::default());
-                        let i = self.active().pickers.len() - 1;
+                        self.active_mut().active_group_mut().pickers.push(PickerPoint::default());
+                        let i = self.active().active_group().pickers.len() - 1;
                         self.hex_buf.insert(i, "#000000".into());
                         self.mark_dirty();
                     }
                 });
             });
             ui.add_space(6.0);
-            // Source selector - placed right under Pick controls so it stays visible.
+            // Source selector
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(self.s().source).color(TEXT_DIM).small());
                 info_icon(ui, self.s().info_source);
@@ -155,13 +171,122 @@ impl ShinyApp {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let n = self.active().pickers.len();
+                    let n = self.active().active_group().pickers.len();
                     for i in 0..n {
                         let live_i = self.last_sample.get(i).copied();
                         self.render_picker_row(ui, i, live_i);
                     }
                 });
         });
+    }
+
+    fn render_zone_tabs(&mut self, ui: &mut egui::Ui, accent: egui::Color32) {
+        let n_groups = self.active().groups.len();
+        let active_gi = self.active().active_group_index;
+        let can_add = n_groups < MAX_GROUPS;
+        let can_remove = n_groups > 1;
+
+        let mut switch_to: Option<usize> = None;
+        let mut add_zone = false;
+        let mut remove_zone: Option<usize> = None;
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for gi in 0..n_groups {
+                let is_active = gi == active_gi;
+                let group_name = self.active().groups[gi].name.clone();
+                let group_count = self.active().groups[gi].count;
+
+                let tab_fill = if is_active { accent.linear_multiply(0.25) } else { SURFACE_2 };
+                let tab_stroke = if is_active {
+                    egui::Stroke::new(1.5, accent)
+                } else {
+                    egui::Stroke::new(1.0, BORDER)
+                };
+
+                let tab_color = if is_active { accent } else { TEXT_DIM };
+
+                // Build the tab as a horizontal group: [name  count] [x]
+                let (tab_rect, tab_resp) = ui.allocate_exact_size(
+                    egui::vec2(0.0, 0.0),
+                    egui::Sense::hover(),
+                );
+                let _ = (tab_rect, tab_resp);
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    let label = egui::RichText::new(format!("{group_name}  {group_count}"))
+                        .color(tab_color)
+                        .size(12.0);
+                    let btn = egui::Button::new(label)
+                        .fill(tab_fill)
+                        .stroke(tab_stroke)
+                        .corner_radius(if can_remove {
+                            egui::CornerRadius {
+                                nw: 8, ne: 0, sw: 8, se: 0,
+                            }
+                        } else {
+                            egui::CornerRadius::same(8)
+                        })
+                        .min_size(egui::vec2(0.0, 28.0));
+                    let resp = ui.add(btn);
+                    if resp.clicked() && !is_active {
+                        switch_to = Some(gi);
+                    }
+
+                    if can_remove {
+                        let x_btn = egui::Button::new(
+                            egui::RichText::new(" × ").color(BAD).size(12.0),
+                        )
+                        .fill(tab_fill)
+                        .stroke(tab_stroke)
+                        .corner_radius(egui::CornerRadius {
+                            nw: 0, ne: 8, sw: 0, se: 8,
+                        })
+                        .min_size(egui::vec2(0.0, 28.0));
+                        let x_resp = ui.add(x_btn).on_hover_text("Supprimer cette zone");
+                        if x_resp.clicked() {
+                            remove_zone = Some(gi);
+                        }
+                    }
+                });
+                ui.add_space(2.0);
+            }
+
+            ui.add_enabled_ui(can_add, |ui| {
+                if ghost_button(ui, "+ Zone").clicked() {
+                    add_zone = true;
+                }
+            });
+        });
+
+        // Apply mutations after the borrow-free loop
+        if let Some(gi) = switch_to {
+            self.active_mut().active_group_index = gi;
+            self.sync_hex_buf();
+            self.sync_counters();
+        }
+        if add_zone {
+            let n = self.active().groups.len();
+            self.active_mut().groups.push(PickerGroup::new(format!("Zone {}", n + 1)));
+            self.active_mut().active_group_index = n;
+            self.sync_counters();
+            self.sync_hex_buf();
+            self.mark_dirty();
+        }
+        if let Some(gi) = remove_zone {
+            if self.active().groups.len() > 1 {
+                self.active_mut().groups.remove(gi);
+                let new_gi = gi.saturating_sub(1).min(self.active().groups.len() - 1);
+                self.active_mut().active_group_index = new_gi;
+                // Reseed worker counts in the correct order after the removal.
+                let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
+                if let Some(w) = &self.capture_worker { w.set_counts(&counts); }
+                self.sync_hex_buf();
+                self.mark_dirty();
+            }
+        }
     }
 
     /// Renders a single picker row. Deletion is routed through the confirm modal.
@@ -171,7 +296,7 @@ impl ShinyApp {
         i: usize,
         live_color: Option<Color>,
     ) {
-        let p = self.active().pickers[i];
+        let p = self.active().active_group().pickers[i];
         let tol = self.active().tolerance;
         let matches = live_color
             .map(|l| l.matches(p.target, tol))
@@ -226,7 +351,7 @@ impl ShinyApp {
                         )
                         .changed()
                     {
-                        self.active_mut().pickers[i].x = x;
+                        self.active_mut().active_group_mut().pickers[i].x = x;
                         self.mark_dirty();
                     }
                     if ui
@@ -239,7 +364,7 @@ impl ShinyApp {
                         )
                         .changed()
                     {
-                        self.active_mut().pickers[i].y = y;
+                        self.active_mut().active_group_mut().pickers[i].y = y;
                         self.mark_dirty();
                     }
 
@@ -300,7 +425,7 @@ impl ShinyApp {
                             });
                         });
                     if let Some(new_c) = commit_color {
-                        self.active_mut().pickers[i].target = new_c;
+                        self.active_mut().active_group_mut().pickers[i].target = new_c;
                         self.hex_buf.insert(i, new_c.to_hex());
                         self.mark_dirty();
                     }
@@ -319,7 +444,7 @@ impl ShinyApp {
                     }
 
                     ui.add_space(8.0);
-                    let can_remove = self.active().pickers.len() > MIN_PICKERS;
+                    let can_remove = self.active().active_group().pickers.len() > MIN_PICKERS;
                     let col = if can_remove { BAD } else { TEXT_DIM };
                     let resp = icon_button(ui, "x", col).on_hover_text(self.s().remove_slot_tip);
                     if can_remove && resp.clicked() {

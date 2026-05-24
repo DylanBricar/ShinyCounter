@@ -106,9 +106,12 @@ impl ShinyApp {
         if confirmed {
             match self.pending_confirm {
                 PendingConfirm::ResetCounter => {
+                    for g in &mut self.active_mut().groups {
+                        g.count = 0;
+                        g.sessions.clear();
+                    }
                     self.active_mut().count = 0;
-                    self.active_mut().sessions.clear();
-                    self.counter.reset();
+                    self.reset_all_counters();
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
                     self.broadcast_state();
@@ -119,7 +122,8 @@ impl ShinyApp {
                         let i = self.active_idx();
                         self.config.presets.remove(i);
                         self.config.active_preset_index = 0;
-                        self.counter.reset();
+                        self.reset_all_counters();
+                        self.sync_counters();
                         self.sync_hex_buf();
                         self.expanded_sessions.clear();
                         self.session_pages.clear();
@@ -128,15 +132,18 @@ impl ShinyApp {
                     }
                 }
                 PendingConfirm::ClearHistory => {
-                    self.active_mut().sessions.clear();
+                    for g in &mut self.active_mut().groups {
+                        g.sessions.clear();
+                    }
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
                     self.mark_dirty();
                 }
                 PendingConfirm::DeletePicker(i) => {
-                    if self.active().pickers.len() > MIN_PICKERS && i < self.active().pickers.len()
+                    if self.active().active_group().pickers.len() > MIN_PICKERS
+                        && i < self.active().active_group().pickers.len()
                     {
-                        self.active_mut().pickers.remove(i);
+                        self.active_mut().active_group_mut().pickers.remove(i);
                         self.sync_hex_buf();
                         // Drop any live samples - indexing may shift.
                         self.last_sample.clear();

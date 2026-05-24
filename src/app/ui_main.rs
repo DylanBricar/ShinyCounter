@@ -79,7 +79,7 @@ impl ShinyApp {
                     });
                 if selected_idx != self.active_idx() {
                     self.config.active_preset_index = selected_idx;
-                    self.counter.reset();
+                    self.sync_counters();
                     self.sync_hex_buf();
                     self.mark_dirty();
                     self.broadcast_state();
@@ -98,7 +98,7 @@ impl ShinyApp {
                         .presets
                         .push(Preset::new(format!("Preset {}", n + 1)));
                     self.config.active_preset_index = self.config.presets.len() - 1;
-                    self.counter.reset();
+                    self.sync_counters();
                     self.sync_hex_buf();
                     self.mark_dirty();
                     self.broadcast_state();

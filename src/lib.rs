@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod capture_worker;
 pub mod counter;
 pub mod i18n;
 pub mod os_accent;

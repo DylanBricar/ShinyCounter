@@ -18,14 +18,14 @@ impl ShinyApp {
                 let mut interval = self.active().interval_ms as i64;
                 if ui
                     .add(
-                        egui::Slider::new(&mut interval, 50..=10_000)
+                        egui::Slider::new(&mut interval, 1..=10_000)
                             .suffix(" ms")
                             .step_by(10.0)
                             .clamping(egui::SliderClamping::Always),
                     )
                     .changed()
                 {
-                    self.active_mut().interval_ms = interval.max(50) as u64;
+                    self.active_mut().interval_ms = interval.max(1) as u64;
                     self.mark_dirty();
                 }
                 ui.separator();
@@ -220,7 +220,7 @@ impl ShinyApp {
                         self.mark_dirty();
                     }
                     if ghost_button(ui, self.s().snapshot).clicked() {
-                        let note = format!("snapshot = {}", self.active().count);
+                        let note = format!("snapshot = {}", self.active().total_count());
                         self.add_log(note);
                     }
                 });
@@ -316,7 +316,10 @@ impl ShinyApp {
             }
             if let Some(i) = restore_idx {
                 let val = self.config.log[i].count_at_event;
-                self.active_mut().count = val;
+                let gi = self.active().active_group_index;
+                self.active_mut().active_group_mut().count = val;
+                self.active_mut().count = self.active().total_count();
+                if let Some(w) = &self.capture_worker { w.set_count(gi, val); }
                 self.mark_dirty();
                 self.broadcast_state();
             }
