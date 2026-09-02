@@ -119,7 +119,7 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           result-encoding: string
           script: |
@@ -470,7 +470,7 @@ jobs:
           subject-path: dist/*
 
       - name: Create and publish release
-        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
