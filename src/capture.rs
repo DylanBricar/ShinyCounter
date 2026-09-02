@@ -105,6 +105,104 @@ pub fn capture_window(id: u32, title_hint: &str, app_hint: &str) -> Result<RgbaI
     Ok(resolved.capture_image()?)
 }
 
+/// A frame cropped around every configured picker. Coordinates passed to
+/// `color_at` remain relative to the original source, so callers do not need
+/// to know whether the monitor capture was cropped.
+pub(crate) struct SamplingFrame {
+    image: RgbaImage,
+    origin_x: i32,
+    origin_y: i32,
+}
+
+impl SamplingFrame {
+    pub(crate) fn color_at(&self, x: i32, y: i32) -> Option<Color> {
+        sample_color(
+            &self.image,
+            x.checked_sub(self.origin_x)?,
+            y.checked_sub(self.origin_y)?,
+        )
+    }
+}
+
+/// Capture only the smallest monitor rectangle containing all valid picker
+/// coordinates. Windows without partial-capture support and macOS Retina
+/// displays use the complete frame to preserve screenshot pixel coordinates.
+pub(crate) fn capture_for_sampling<I>(source: &CaptureSource, points: I) -> Result<SamplingFrame>
+where
+    I: IntoIterator<Item = (i32, i32)>,
+{
+    match source {
+        CaptureSource::Monitor { index } => {
+            let monitors = Monitor::all()?;
+            let mon = monitors
+                .get(*index)
+                .or_else(|| monitors.first())
+                .ok_or_else(|| anyhow!("monitor {index} not available"))?;
+            // On macOS, xcap reports monitor bounds in logical points while
+            // the screenshot can contain Retina-resolution pixels. Picker
+            // coordinates are screenshot pixels, so cropping without an
+            // explicit scale conversion would sample the wrong location.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = points;
+                Ok(SamplingFrame {
+                    image: mon.capture_image()?,
+                    origin_x: 0,
+                    origin_y: 0,
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let width = mon.width()?;
+                let height = mon.height()?;
+                let Some((x, y, region_width, region_height)) =
+                    sampling_bounds(points, width, height)
+                else {
+                    return Ok(SamplingFrame {
+                        image: RgbaImage::new(0, 0),
+                        origin_x: 0,
+                        origin_y: 0,
+                    });
+                };
+                Ok(SamplingFrame {
+                    image: mon.capture_region(x, y, region_width, region_height)?,
+                    origin_x: x as i32,
+                    origin_y: y as i32,
+                })
+            }
+        }
+        CaptureSource::Window { id, title, app } => Ok(SamplingFrame {
+            image: capture_window(*id, title, app)?,
+            origin_x: 0,
+            origin_y: 0,
+        }),
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn sampling_bounds<I>(points: I, width: u32, height: u32) -> Option<(u32, u32, u32, u32)>
+where
+    I: IntoIterator<Item = (i32, i32)>,
+{
+    let mut bounds: Option<(u32, u32, u32, u32)> = None;
+    for (x, y) in points {
+        if x < 0 || y < 0 {
+            continue;
+        }
+        let (x, y) = (x as u32, y as u32);
+        if x >= width || y >= height {
+            continue;
+        }
+        bounds = Some(match bounds {
+            Some((min_x, min_y, max_x, max_y)) => {
+                (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+            }
+            None => (x, y, x, y),
+        });
+    }
+    bounds.map(|(min_x, min_y, max_x, max_y)| (min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
+}
+
 fn field_matches<E>(value: Result<String, E>, hint: &str) -> bool {
     !hint.trim().is_empty() && value.as_deref().ok() == Some(hint)
 }
@@ -112,7 +210,7 @@ fn field_matches<E>(value: Result<String, E>, hint: &str) -> bool {
 /// Sample a single pixel from a source without allocating a full-screen image.
 /// On monitors: uses `capture_region(x, y, 1, 1)` — only transfers 4 bytes.
 /// On windows: captures the full window then reads the pixel (window capture
-/// doesn't support partial regions in xcap 0.6).
+/// doesn't support partial regions in xcap).
 pub fn sample_pixel(source: &CaptureSource, x: i32, y: i32) -> Result<Option<Color>> {
     if x < 0 || y < 0 {
         return Ok(None);
@@ -182,5 +280,29 @@ mod tests {
         assert_eq!(sample_color(&img, 0, -1), None);
         assert_eq!(sample_color(&img, 10, 5), None);
         assert_eq!(sample_color(&img, 5, 10), None);
+    }
+
+    #[test]
+    fn sampling_bounds_crop_to_valid_picker_coordinates() {
+        assert_eq!(
+            sampling_bounds([(-1, 0), (7, 8), (2, 3), (20, 2)], 10, 10),
+            Some((2, 3, 6, 6))
+        );
+        assert_eq!(sampling_bounds([(-1, 0), (10, 2)], 10, 10), None);
+    }
+
+    #[test]
+    fn cropped_frame_preserves_source_coordinates() {
+        let mut image = RgbaImage::new(2, 2);
+        image.put_pixel(1, 1, Rgba([9, 8, 7, 255]));
+        let frame = SamplingFrame {
+            image,
+            origin_x: 5,
+            origin_y: 7,
+        };
+
+        assert_eq!(frame.color_at(6, 8), Some(Color::new(9, 8, 7)));
+        assert_eq!(frame.color_at(4, 8), None);
+        assert_eq!(frame.color_at(i32::MIN, i32::MIN), None);
     }
 }

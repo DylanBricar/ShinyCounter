@@ -2,9 +2,10 @@
 //! launch (and on user request) hits the public Releases API, then optionally
 //! streams the matching binary asset into the OS Downloads folder.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use parking_lot::Mutex;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,12 +15,16 @@ use std::time::Duration;
 const REPO_OWNER: &str = "DylanBricar";
 const REPO_NAME: &str = "ShinyCounter";
 const USER_AGENT: &str = concat!("ShinyCounter/", env!("CARGO_PKG_VERSION"));
+const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
+const RELEASE_DOWNLOAD_PREFIX: &str =
+    "https://github.com/DylanBricar/ShinyCounter/releases/download/";
 
 #[derive(Debug, Clone)]
 pub struct UpdateAsset {
     pub url: String,
     pub name: String,
     pub size: u64,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone)]
@@ -179,14 +184,23 @@ fn platform_suffix() -> Option<&'static str> {
 
 fn pick_platform_asset(assets: &[AssetDto]) -> Option<UpdateAsset> {
     let suffix = platform_suffix()?;
-    assets
-        .iter()
-        .find(|a| a.name.ends_with(suffix))
-        .map(|a| UpdateAsset {
-            url: a.browser_download_url.clone(),
-            name: a.name.clone(),
-            size: a.size,
+    assets.iter().find_map(|asset| {
+        let digest = asset.digest.as_deref()?;
+        if !asset.name.ends_with(suffix)
+            || asset.size == 0
+            || asset.size > MAX_ASSET_BYTES
+            || !is_trusted_asset_url(&asset.browser_download_url)
+            || parse_sha256_digest(digest).is_err()
+        {
+            return None;
+        }
+        Some(UpdateAsset {
+            url: asset.browser_download_url.clone(),
+            name: asset.name.clone(),
+            size: asset.size,
+            digest: digest.to_owned(),
         })
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,20 +223,25 @@ struct AssetDto {
     browser_download_url: String,
     #[serde(default)]
     size: u64,
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 fn fetch_latest() -> Result<ReleaseDto> {
     let url = format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest");
-    let response = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(8))
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(8)))
         .user_agent(USER_AGENT)
         .build()
+        .into();
+    let mut response = agent
         .get(&url)
-        .set("Accept", "application/vnd.github+json")
+        .header("Accept", "application/vnd.github+json")
         .call()
         .with_context(|| format!("GET {url}"))?;
     let release: ReleaseDto = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("parsing /releases/latest JSON")?;
     if release.draft || release.prerelease {
         return Err(anyhow!("only stable releases are considered for update"));
@@ -235,6 +254,7 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
         .asset
         .as_ref()
         .ok_or_else(|| anyhow!("no platform-matching asset in this release"))?;
+    validate_asset(asset)?;
     let dir = dirs::download_dir()
         .or_else(dirs::cache_dir)
         .unwrap_or_else(std::env::temp_dir);
@@ -245,40 +265,20 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
     let tmp_path = dir.join(format!("{file_name}.partial"));
     let _ = std::fs::remove_file(&tmp_path);
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout(Duration::from_secs(180))
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(180)))
         .user_agent(USER_AGENT)
-        .build();
-    let response = agent
+        .build()
+        .into();
+    let mut response = agent
         .get(&asset.url)
-        .set("Accept", "application/octet-stream")
+        .header("Accept", "application/octet-stream")
         .call()
         .with_context(|| format!("GET {}", asset.url))?;
 
-    let mut reader = response.into_reader();
-    let mut file = std::fs::File::create(&tmp_path)
-        .with_context(|| format!("creating {}", tmp_path.display()))?;
-    let mut buf = vec![0u8; 64 * 1024];
-    let total = asset.size.max(1);
-    let mut downloaded: u64 = 0;
-    let mut last_pct: u8 = 0;
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])?;
-        downloaded += n as u64;
-        let pct = ((downloaded.saturating_mul(100)) / total).min(100) as u8;
-        if pct != last_pct {
-            on_progress(pct);
-            last_pct = pct;
-        }
-    }
-    file.flush()?;
-    drop(file);
-    on_progress(100);
+    let mut reader = response.body_mut().as_reader();
+    write_verified_download(&mut reader, &tmp_path, asset, &on_progress)?;
     // Replace any existing copy. If the destination is locked (e.g. the user
     // is currently running it), keep the `.partial` file with a numeric
     // suffix so the download isn't lost.
@@ -307,6 +307,118 @@ fn download_asset(info: &UpdateInfo, on_progress: impl Fn(u8)) -> Result<PathBuf
         return Ok(alt);
     }
     Ok(target_path)
+}
+
+fn write_verified_download<R: Read>(
+    reader: &mut R,
+    path: &Path,
+    asset: &UpdateAsset,
+    on_progress: &impl Fn(u8),
+) -> Result<()> {
+    let result = (|| {
+        let mut file =
+            std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+        copy_verified(reader, &mut file, asset, on_progress)?;
+        file.sync_all()
+            .with_context(|| format!("syncing {}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+fn copy_verified<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    asset: &UpdateAsset,
+    on_progress: &impl Fn(u8),
+) -> Result<()> {
+    let expected = parse_sha256_digest(&asset.digest)?;
+    let mut buf = vec![0_u8; 64 * 1024];
+    let mut downloaded = 0_u64;
+    let mut last_pct = 0_u8;
+    let mut hasher = Sha256::new();
+    loop {
+        let bytes_read = reader.read(&mut buf)?;
+        if bytes_read == 0 {
+            break;
+        }
+        downloaded = downloaded
+            .checked_add(bytes_read as u64)
+            .ok_or_else(|| anyhow!("download size overflow"))?;
+        if downloaded > asset.size {
+            bail!("download exceeded declared size of {} bytes", asset.size);
+        }
+        writer.write_all(&buf[..bytes_read])?;
+        hasher.update(&buf[..bytes_read]);
+        let progress = ((downloaded.saturating_mul(100)) / asset.size).min(99) as u8;
+        if progress != last_pct {
+            on_progress(progress);
+            last_pct = progress;
+        }
+    }
+    writer.flush()?;
+    if downloaded != asset.size {
+        bail!("downloaded {downloaded} bytes, expected {}", asset.size);
+    }
+    let actual: [u8; 32] = hasher.finalize().into();
+    if actual != expected {
+        bail!("downloaded asset failed SHA-256 verification");
+    }
+    on_progress(100);
+    Ok(())
+}
+
+fn validate_asset(asset: &UpdateAsset) -> Result<()> {
+    if asset.size == 0 || asset.size > MAX_ASSET_BYTES {
+        bail!("asset size {} is outside the accepted range", asset.size);
+    }
+    if !is_trusted_asset_url(&asset.url) {
+        bail!("refusing an update asset outside the official GitHub repository");
+    }
+    parse_sha256_digest(&asset.digest)?;
+    Ok(())
+}
+
+fn is_trusted_asset_url(url: &str) -> bool {
+    url.starts_with(RELEASE_DOWNLOAD_PREFIX)
+        && !url
+            .chars()
+            .any(|c| c.is_ascii_control() || c.is_whitespace())
+}
+
+fn parse_sha256_digest(digest: &str) -> Result<[u8; 32]> {
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| anyhow!("release asset has no SHA-256 digest"))?;
+    if hex.len() != 64 {
+        bail!("release asset has a malformed SHA-256 digest");
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let offset = index * 2;
+        *byte = u8::from_str_radix(&hex[offset..offset + 2], 16)
+            .context("release asset has a malformed SHA-256 digest")?;
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+fn verify_sha256(bytes: &[u8], digest: &str) -> Result<()> {
+    let asset = UpdateAsset {
+        url: String::new(),
+        name: String::new(),
+        size: bytes.len() as u64,
+        digest: digest.to_owned(),
+    };
+    copy_verified(
+        &mut std::io::Cursor::new(bytes),
+        &mut std::io::sink(),
+        &asset,
+        &|_| {},
+    )
 }
 
 fn safe_asset_file_name(name: &str) -> String {
@@ -375,6 +487,7 @@ pub const SNOOZE_DURATION_SECS: i64 = 60 * 60 * 24 * 7; // 7 days
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     fn release(tag: &str) -> ReleaseDto {
         ReleaseDto {
@@ -413,18 +526,36 @@ mod tests {
         let assets = vec![
             AssetDto {
                 name: "ShinyCounter-1.2.3-linux-x86_64.tar.gz".into(),
-                browser_download_url: "https://e/linux".into(),
+                browser_download_url: format!(
+                    "{RELEASE_DOWNLOAD_PREFIX}v1.2.3/ShinyCounter-1.2.3-linux-x86_64.tar.gz"
+                ),
                 size: 10,
+                digest: Some(
+                    "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                        .into(),
+                ),
             },
             AssetDto {
                 name: "ShinyCounter-1.2.3-windows-x86_64.exe".into(),
-                browser_download_url: "https://e/win".into(),
+                browser_download_url: format!(
+                    "{RELEASE_DOWNLOAD_PREFIX}v1.2.3/ShinyCounter-1.2.3-windows-x86_64.exe"
+                ),
                 size: 20,
+                digest: Some(
+                    "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                        .into(),
+                ),
             },
             AssetDto {
                 name: "ShinyCounter-1.2.3-macos-aarch64.dmg".into(),
-                browser_download_url: "https://e/mac".into(),
+                browser_download_url: format!(
+                    "{RELEASE_DOWNLOAD_PREFIX}v1.2.3/ShinyCounter-1.2.3-macos-aarch64.dmg"
+                ),
                 size: 30,
+                digest: Some(
+                    "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                        .into(),
+                ),
             },
         ];
         let picked = pick_platform_asset(&assets);
@@ -442,5 +573,115 @@ mod tests {
         );
         assert_eq!(safe_asset_file_name("...\u{0000}"), "_");
         assert_eq!(safe_asset_file_name("../"), "shiny-counter-update");
+    }
+
+    #[test]
+    fn sha256_digest_must_match_downloaded_bytes() {
+        let digest = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert!(verify_sha256(b"hello", digest).is_ok());
+        assert!(verify_sha256(b"tampered", digest).is_err());
+    }
+
+    #[test]
+    fn sha256_digest_rejects_unknown_or_malformed_algorithms() {
+        assert!(verify_sha256(b"hello", "sha512:abcd").is_err());
+        assert!(verify_sha256(b"hello", "sha256:not-hex").is_err());
+    }
+
+    #[test]
+    fn asset_validation_rejects_untrusted_or_invalid_metadata() {
+        let valid = test_asset(5, valid_digest());
+        assert!(validate_asset(&valid).is_ok());
+        let mut maximum_size = valid.clone();
+        maximum_size.size = MAX_ASSET_BYTES;
+        assert!(validate_asset(&maximum_size).is_ok());
+
+        let mut foreign_host = valid.clone();
+        foreign_host.url = "https://example.com/ShinyCounter.exe".into();
+        assert!(validate_asset(&foreign_host).is_err());
+
+        let mut lookalike_path = valid.clone();
+        lookalike_path.url =
+            "https://github.com/DylanBricar/ShinyCounter/releases/download.evil/v1/test.bin".into();
+        assert!(validate_asset(&lookalike_path).is_err());
+
+        let mut whitespace = valid.clone();
+        whitespace.url.push('\n');
+        assert!(validate_asset(&whitespace).is_err());
+
+        let mut empty = valid.clone();
+        empty.size = 0;
+        assert!(validate_asset(&empty).is_err());
+
+        let mut oversized = valid.clone();
+        oversized.size = MAX_ASSET_BYTES + 1;
+        assert!(validate_asset(&oversized).is_err());
+
+        let mut malformed_digest = valid;
+        malformed_digest.digest = "sha256:not-a-digest".into();
+        assert!(validate_asset(&malformed_digest).is_err());
+    }
+
+    #[test]
+    fn production_download_writer_accepts_only_the_declared_verified_body() {
+        let path = temporary_test_path("verified");
+        let asset = test_asset(
+            5,
+            "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        );
+        let mut reader = Cursor::new(b"hello");
+
+        write_verified_download(&mut reader, &path, &asset, &|_| {})
+            .expect("valid body should be persisted");
+
+        assert_eq!(std::fs::read(&path).expect("verified file"), b"hello");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn production_download_writer_removes_short_long_and_tampered_partials() {
+        let cases = [
+            ("short", b"hell".as_slice(), 5, valid_digest()),
+            ("long", b"hello!".as_slice(), 5, valid_digest()),
+            (
+                "tampered",
+                b"hello".as_slice(),
+                5,
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        ];
+
+        for (label, body, size, digest) in cases {
+            let path = temporary_test_path(label);
+            let asset = test_asset(size, digest);
+            let mut reader = Cursor::new(body);
+
+            assert!(write_verified_download(&mut reader, &path, &asset, &|_| {}).is_err());
+            assert!(!path.exists(), "partial file survived the {label} case");
+        }
+    }
+
+    fn test_asset(size: u64, digest: &str) -> UpdateAsset {
+        UpdateAsset {
+            url: format!("{RELEASE_DOWNLOAD_PREFIX}v1.2.3/test.bin"),
+            name: "test.bin".into(),
+            size,
+            digest: digest.into(),
+        }
+    }
+
+    fn valid_digest() -> &'static str {
+        "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    }
+
+    fn temporary_test_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "shiny-counter-{label}-{}-{nonce}.partial",
+            std::process::id()
+        ))
     }
 }

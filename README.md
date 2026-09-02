@@ -192,30 +192,45 @@ Copy it between machines, back it up, or delete it to start fresh.
 
 ## Technical notes
 
-- **Sampling cost** is O(pickers) per tick - typically 10 captures per second
-  at the default interval. The app captures a full frame, then reads 3 pixels and
-  drops the frame. Memory footprint stays small even after hours.
-- **Background HTTP** runs in a single dedicated worker thread and is joined
-  on shutdown.
+- **Sampling cost** is O(total configured pickers) per tick. The app captures
+  one frame for every zone, samples the configured pixels, then drops the frame.
+  Memory footprint therefore stays bounded even after hours.
+- **Background HTTP** keeps immediate endpoints responsive while bounded
+  long-poll handlers wait for counter changes; all server threads are stopped
+  cleanly on shutdown.
 - History caps: 500 sessions per preset, 10 000 hits per session, 500 entries
   in the journal - older entries are dropped automatically.
-- Counter state machine has full **unit + integration test coverage**
-  (`cargo test`).
-- CI runs `cargo fmt --check`, `cargo clippy -D warnings` and the full test
-  suite on every PR.
+- Counter, capture-worker synchronization, update integrity, storage and HTTP
+  behavior are covered by unit and integration tests (`cargo test`).
+- CI runs formatting, strict Clippy, the full test suite, a 30% line-coverage
+  floor and a RustSec audit on Linux, Windows and macOS for every PR and every
+  push to `main`; the advisory check also runs weekly.
 - Release builds use `lto = "fat"`, `codegen-units = 1`, `strip = "symbols"`
   and `panic = "abort"` for the smallest, fastest binary.
 
 ## Build & release pipeline
 
-Pushing to `main` triggers the [release workflow](.github/workflows/release.yml):
+Releases are started explicitly from the
+[release workflow](.github/workflows/release.yml) after bumping the package
+version in `Cargo.toml`:
 
-1. Computes the next semver patch from existing tags.
-2. Generates a Conventional-Commits style changelog.
-3. Builds matrix targets (Linux x86_64 / aarch64, Windows x86_64, macOS
+1. Validates the exact commit with formatting, Clippy, tests and RustSec.
+2. Rejects an invalid or already published package version.
+3. Generates a Conventional-Commits style changelog.
+4. Builds matrix targets (Linux x86_64 / aarch64, Windows x86_64, macOS
    x86_64 / Apple Silicon).
-4. Packages a `.tar.gz` / `.exe` / `.dmg` per platform.
-5. Uploads everything to a fresh GitHub Release and publishes it.
+5. Packages a `.tar.gz` / `.exe` / `.dmg` per platform.
+6. Generates `SHA256SUMS` and GitHub build-provenance attestations.
+7. Creates the tag only after every build succeeds, uploads all assets, then
+   publishes the release. A failed publication cleans up its draft and tag.
+
+The in-app updater accepts only assets from this repository, enforces the size
+reported by GitHub and verifies the release-provided SHA-256 digest before a
+download is exposed to the user.
+
+Release provenance can additionally be checked with
+`gh attestation verify <asset> --repo DylanBricar/ShinyCounter` and file hashes
+can be compared against the published `SHA256SUMS` manifest.
 
 ## License
 

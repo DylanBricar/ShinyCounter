@@ -92,6 +92,8 @@ pub struct Strings {
     pub confirm_reset_msg: &'static str,
     pub confirm_delete_preset_title: &'static str,
     pub confirm_delete_preset_msg: &'static str,
+    pub confirm_delete_group_title: &'static str,
+    pub confirm_delete_group_msg: &'static str,
     pub confirm_clear_history_title: &'static str,
     pub confirm_clear_history_msg: &'static str,
     pub action_reset: &'static str,
@@ -227,6 +229,9 @@ const FR: Strings = Strings {
     confirm_delete_preset_title: "Supprimer ce préréglage ?",
     confirm_delete_preset_msg:
         "Toutes les pipettes, couleurs, notes et l'historique de ce préréglage seront perdus définitivement.",
+    confirm_delete_group_title: "Supprimer cette zone ?",
+    confirm_delete_group_msg:
+        "Le compteur, les pipettes et tout l'historique de cette zone seront perdus définitivement.",
     confirm_clear_history_title: "Effacer l'historique ?",
     confirm_clear_history_msg:
         "L'historique des resets de ce préréglage sera vidé. Le compteur reste inchangé.",
@@ -375,6 +380,9 @@ const EN: Strings = Strings {
     confirm_delete_preset_title: "Delete this preset?",
     confirm_delete_preset_msg:
         "All pickers, colors, notes and history for this preset will be lost permanently.",
+    confirm_delete_group_title: "Delete this zone?",
+    confirm_delete_group_msg:
+        "The counter, pickers and complete history for this zone will be lost permanently.",
     confirm_clear_history_title: "Clear history?",
     confirm_clear_history_msg:
         "The reset history for this preset will be wiped. The counter is preserved.",

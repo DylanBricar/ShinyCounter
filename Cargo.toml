@@ -1,8 +1,8 @@
 [package]
 name = "shiny_counter"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.95"
 authors = ["ShinyCounter"]
 description = "Cross-platform shiny Pokémon hunt counter driven by on-screen color sampling."
 license = "MIT"
@@ -16,28 +16,32 @@ name = "shiny_counter"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-egui = "0.34.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
-xcap = "0.6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-dirs = "5"
+eframe = { version = "0.36.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+xcap = "0.9.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+dirs = "6.0.0"
 tiny_http = "0.12"
-anyhow = "1"
-parking_lot = "0.12"
-time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
-ureq = { version = "2.10", default-features = false, features = ["tls", "gzip", "json"] }
-webbrowser = "1.0"
-semver = "1.0"
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio", "common-controls-v6"] }
+anyhow = "1.0.104"
+parking_lot = "0.12.5"
+time = { version = "0.3.55", features = ["formatting", "local-offset", "macros"] }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls", "gzip", "json"] }
+webbrowser = { version = "1.2.4", features = ["hardened"] }
+semver = "1.0.28"
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
+sha2 = "0.11.0"
 
 [build-dependencies]
-ico = "0.3"
-image = { version = "0.25", default-features = false, features = ["png"] }
+ico = "0.5.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
+
+[package.metadata.cargo-machete]
+ignored = ["ico", "winresource"]
 
 [profile.release]
 lto = "fat"

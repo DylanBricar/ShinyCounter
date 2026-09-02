@@ -1,5 +1,5 @@
 use super::helpers::{epoch_now, format_size};
-use super::state::{PendingConfirm, ShinyApp};
+use super::state::{remove_picker_group, PendingConfirm, ShinyApp};
 use crate::theme::{
     colored_button, ghost_button, pill, BAD, BORDER, SHINY, SURFACE, TEXT, TEXT_DIM,
 };
@@ -27,6 +27,11 @@ impl ShinyApp {
                 self.s().confirm_clear_history_title,
                 self.s().confirm_clear_history_msg,
                 self.s().action_clear,
+            ),
+            PendingConfirm::DeleteGroup(_) => (
+                self.s().confirm_delete_group_title,
+                self.s().confirm_delete_group_msg,
+                self.s().action_delete,
             ),
             PendingConfirm::DeletePicker(_) => (
                 self.s().confirm_delete_picker_title,
@@ -106,12 +111,18 @@ impl ShinyApp {
         if confirmed {
             match self.pending_confirm {
                 PendingConfirm::ResetCounter => {
+                    if self.running {
+                        self.stop_capture_worker_and_reconcile();
+                    }
                     for g in &mut self.active_mut().groups {
                         g.count = 0;
                         g.sessions.clear();
                     }
                     self.active_mut().count = 0;
                     self.reset_all_counters();
+                    if self.running {
+                        self.open_session();
+                    }
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
                     self.broadcast_state();
@@ -119,12 +130,19 @@ impl ShinyApp {
                 }
                 PendingConfirm::DeletePreset => {
                     if self.config.presets.len() > 1 {
+                        if self.running {
+                            self.stop_capture_worker_and_reconcile();
+                            self.close_session();
+                        }
                         let i = self.active_idx();
                         self.config.presets.remove(i);
                         self.config.active_preset_index = 0;
                         self.reset_all_counters();
                         self.sync_counters();
                         self.sync_hex_buf();
+                        if self.running {
+                            self.open_session();
+                        }
                         self.expanded_sessions.clear();
                         self.session_pages.clear();
                         self.mark_dirty();
@@ -135,9 +153,21 @@ impl ShinyApp {
                     for g in &mut self.active_mut().groups {
                         g.sessions.clear();
                     }
+                    if self.running {
+                        self.open_session();
+                    }
                     self.expanded_sessions.clear();
                     self.session_pages.clear();
                     self.mark_dirty();
+                }
+                PendingConfirm::DeleteGroup(group_idx) => {
+                    if remove_picker_group(self.active_mut(), group_idx) {
+                        self.sync_removed_group(group_idx);
+                        self.sync_hex_buf();
+                        self.last_sample.clear();
+                        self.mark_dirty();
+                        self.broadcast_state();
+                    }
                 }
                 PendingConfirm::DeletePicker(i) => {
                     if self.active().active_group().pickers.len() > MIN_PICKERS

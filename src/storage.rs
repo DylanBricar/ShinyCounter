@@ -1,5 +1,6 @@
 use crate::types::Config;
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -86,11 +87,28 @@ fn backup_invalid_config(path: &Path) -> Result<Option<PathBuf>> {
 
 pub fn save(cfg: &Config) -> Result<()> {
     let path = config_path()?;
+    save_to_path(cfg, &path)
+}
+
+fn save_to_path(cfg: &Config, path: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(cfg)?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("creating temporary config {}", tmp.display()))?;
+        file.write_all(json.as_bytes())
+            .with_context(|| format!("writing temporary config {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("syncing temporary config {}", tmp.display()))?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+            .with_context(|| format!("replacing config {}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -134,6 +152,23 @@ mod tests {
             "{ not valid json"
         );
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saving_replaces_an_existing_config_atomically() {
+        let dir = unique_test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, "old config").unwrap();
+        let mut cfg = Config::default();
+        cfg.presets[0].name = "Updated".into();
+
+        save_to_path(&cfg, &path).expect("existing config should be replaced");
+
+        let loaded = load_inner_from_path(&path).expect("replacement should be valid JSON");
+        assert_eq!(loaded.presets[0].name, "Updated");
+        assert!(!path.with_extension("json.tmp").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

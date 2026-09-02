@@ -78,9 +78,16 @@ impl ShinyApp {
                         }
                     });
                 if selected_idx != self.active_idx() {
+                    if self.running {
+                        self.stop_capture_worker_and_reconcile();
+                        self.close_session();
+                    }
                     self.config.active_preset_index = selected_idx;
                     self.sync_counters();
                     self.sync_hex_buf();
+                    if self.running {
+                        self.open_session();
+                    }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -93,6 +100,10 @@ impl ShinyApp {
                 }
 
                 if ghost_button(ui, self.s().new).clicked() {
+                    if self.running {
+                        self.stop_capture_worker_and_reconcile();
+                        self.close_session();
+                    }
                     let n = self.config.presets.len();
                     self.config
                         .presets
@@ -100,22 +111,26 @@ impl ShinyApp {
                     self.config.active_preset_index = self.config.presets.len() - 1;
                     self.sync_counters();
                     self.sync_hex_buf();
+                    if self.running {
+                        self.open_session();
+                    }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
                 if ghost_button(ui, self.s().duplicate).clicked() {
-                    let mut copy = self.active().clone();
+                    if self.running {
+                        self.stop_capture_worker_and_reconcile();
+                        self.close_session();
+                    }
+                    let mut copy = self.active().duplicate_for_new_hunt();
                     copy.name = format!("{} (copy)", copy.name);
-                    copy.count = 0;
-                    copy.hits.clear();
-                    // Drop the file-output path: two presets writing to the
-                    // same file would silently overwrite each other every
-                    // time the user switched between them.
-                    copy.output_file = None;
-                    copy.output_file_enabled = false;
                     self.config.presets.push(copy);
                     self.config.active_preset_index = self.config.presets.len() - 1;
+                    self.sync_counters();
                     self.sync_hex_buf();
+                    if self.running {
+                        self.open_session();
+                    }
                     self.mark_dirty();
                     self.broadcast_state();
                 }
@@ -303,6 +318,9 @@ impl ShinyApp {
                 }
             });
         if let Some(c) = chosen {
+            if !same_source(&c, &self.config.capture) && self.running {
+                self.stop_capture_worker_and_reconcile();
+            }
             self.config.capture = c;
             self.mark_dirty();
         }

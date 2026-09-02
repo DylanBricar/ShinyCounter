@@ -22,7 +22,7 @@ impl ShinyApp {
         }
         let mut keep = true;
         let mut commit = false;
-        panel.show_inside(root_ui, |ui| {
+        panel.show(root_ui, |ui| {
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(

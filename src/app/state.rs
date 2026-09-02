@@ -9,8 +9,8 @@ use shiny_counter::os_accent;
 use shiny_counter::server::CounterServer;
 use shiny_counter::storage;
 use shiny_counter::types::{
-    Color, Config, HitRecord, LogEntry, PickerPoint, Preset, SessionRecord, MAX_PICKERS,
-    MIN_PICKERS,
+    Color, Config, HitRecord, LogEntry, PickerGroup, PickerPoint, Preset, SessionRecord,
+    MAX_PICKERS, MIN_PICKERS,
 };
 use shiny_counter::update::{self, UpdateChannel};
 use std::collections::{HashMap, HashSet};
@@ -41,6 +41,7 @@ pub(super) enum PendingConfirm {
     ResetCounter,
     DeletePreset,
     ClearHistory,
+    DeleteGroup(usize),
     DeletePicker(usize),
 }
 
@@ -66,6 +67,9 @@ pub struct ShinyApp {
     pub(super) note_buf: String,
     pub(super) hex_buf: HashMap<usize, String>,
     pub(super) dirty: bool,
+    /// True when UI data that can affect the sampler changed. This avoids
+    /// rebuilding nested picker vectors on every 16 ms repaint.
+    pub(super) worker_config_dirty: bool,
     pub(super) last_save: Instant,
     pub(super) theme_installed: bool,
     pub(super) show_settings: bool,
@@ -108,6 +112,72 @@ fn close_open_sessions_from_previous_run(config: &mut Config) -> bool {
     changed
 }
 
+pub(super) fn open_group_session(group: &mut PickerGroup, now: i64, stamp: &str) {
+    if let Some(last) = group.sessions.last_mut() {
+        if last.is_open() {
+            last.ended_at_epoch = Some(now);
+            last.ended_at = Some(stamp.to_owned());
+        }
+    }
+    group.sessions.push(SessionRecord {
+        started_at_epoch: now,
+        started_at: stamp.to_owned(),
+        ended_at_epoch: None,
+        ended_at: None,
+        hits: Vec::new(),
+    });
+}
+
+fn open_sessions(preset: &mut Preset, now: i64, stamp: &str) {
+    for group in &mut preset.groups {
+        open_group_session(group, now, stamp);
+    }
+}
+
+pub(super) fn remove_picker_group(preset: &mut Preset, group_idx: usize) -> bool {
+    if preset.groups.len() <= 1 || group_idx >= preset.groups.len() {
+        return false;
+    }
+    let old_active = preset.active_group_index;
+    preset.groups.remove(group_idx);
+    preset.active_group_index = if old_active > group_idx {
+        old_active - 1
+    } else if old_active == group_idx {
+        group_idx.saturating_sub(1)
+    } else {
+        old_active
+    }
+    .min(preset.groups.len().saturating_sub(1));
+    preset.count = preset.total_count();
+    true
+}
+
+fn close_sessions(preset: &mut Preset, now: i64, stamp: &str) {
+    for group in &mut preset.groups {
+        if let Some(last) = group.sessions.last_mut() {
+            if last.is_open() {
+                last.ended_at_epoch = Some(now);
+                last.ended_at = Some(stamp.to_owned());
+            }
+        }
+    }
+}
+
+fn partition_capture_errors(events: Vec<SampleEvent>) -> (Vec<SampleEvent>, Option<String>) {
+    let mut error = None;
+    let events = events
+        .into_iter()
+        .filter_map(|event| match event {
+            SampleEvent::CaptureError(message) => {
+                error = Some(message);
+                None
+            }
+            other => Some(other),
+        })
+        .collect();
+    (events, error)
+}
+
 impl ShinyApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let storage::LoadOutcome {
@@ -134,6 +204,7 @@ impl ShinyApp {
             note_buf: String::new(),
             hex_buf: HashMap::new(),
             dirty: false,
+            worker_config_dirty: true,
             last_save: Instant::now(),
             theme_installed: false,
             show_settings: false,
@@ -181,10 +252,46 @@ impl ShinyApp {
         &mut self.config.presets[i]
     }
 
-    /// Ensure `counters` has exactly one entry per group in the active preset.
-    /// Called when the preset switches or groups are added/removed.
-    /// No-op kept for call sites that used to resize counters — worker manages its own now.
-    pub(super) fn sync_counters(&mut self) {}
+    /// Atomically replace worker configuration and counts after a preset or
+    /// group-topology change, invalidating any sample captured beforehand.
+    pub(super) fn sync_counters(&mut self) {
+        let config = self.make_worker_config();
+        let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
+        let error = self
+            .capture_worker
+            .as_ref()
+            .and_then(|worker| worker.replace_config(config, &counts).err());
+        if let Some(error) = error {
+            self.handle_worker_config_error(error);
+        }
+        self.worker_preset_index = self.active_idx();
+    }
+
+    pub(super) fn sync_added_group(&mut self, group_idx: usize) {
+        let config = self.make_worker_config();
+        let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
+        let error = self
+            .capture_worker
+            .as_ref()
+            .and_then(|worker| worker.insert_group(group_idx, config, &counts).err());
+        if let Some(error) = error {
+            self.handle_worker_config_error(error);
+        }
+        self.worker_preset_index = self.active_idx();
+    }
+
+    pub(super) fn sync_removed_group(&mut self, group_idx: usize) {
+        let config = self.make_worker_config();
+        let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
+        let error = self
+            .capture_worker
+            .as_ref()
+            .and_then(|worker| worker.remove_group(group_idx, config, &counts).err());
+        if let Some(error) = error {
+            self.handle_worker_config_error(error);
+        }
+        self.worker_preset_index = self.active_idx();
+    }
 
     /// Whether the active group's counter is armed (delegates to worker).
     pub(super) fn active_counter_is_armed(&self) -> bool {
@@ -210,6 +317,15 @@ impl ShinyApp {
         }
     }
 
+    fn handle_worker_config_error(&mut self, error: std::io::Error) {
+        self.stop_capture_worker_and_reconcile();
+        self.running = false;
+        self.close_all_sessions();
+        self.last_sample.clear();
+        self.status = format!("{}: {error}", self.s().capture_error);
+        self.mark_dirty();
+    }
+
     pub(super) fn sync_hex_buf(&mut self) {
         let snapshot: Vec<(usize, String)> = self
             .active()
@@ -227,6 +343,7 @@ impl ShinyApp {
 
     pub(super) fn mark_dirty(&mut self) {
         self.dirty = true;
+        self.worker_config_dirty = true;
     }
 
     pub(super) fn flush_save(&mut self) {
@@ -267,30 +384,52 @@ impl ShinyApp {
         let current_preset = self.active_idx();
         let preset_changed = current_preset != self.worker_preset_index;
 
-        let needs_new = self
+        let source_changed = self
             .capture_worker
             .as_ref()
             .map(|w| w.source_changed(&self.config.capture))
-            .unwrap_or(true);
+            .unwrap_or(false);
+        if preset_changed || source_changed {
+            self.stop_capture_worker_and_reconcile();
+            if !self.running {
+                return;
+            }
+        }
+        let needs_new = self.capture_worker.is_none();
 
         let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
 
         if needs_new {
             let cfg = self.make_worker_config();
-            let worker = CaptureWorker::start(self.config.capture.clone(), cfg);
-            worker.set_counts(&counts);
-            self.capture_worker = Some(worker);
-            self.worker_preset_index = current_preset;
+            match CaptureWorker::start(self.config.capture.clone(), cfg, &counts) {
+                Ok(worker) => {
+                    self.capture_worker = Some(worker);
+                    self.worker_preset_index = current_preset;
+                    self.worker_config_dirty = false;
+                }
+                Err(error) => {
+                    self.running = false;
+                    self.close_all_sessions();
+                    self.status = format!("{}: {error}", self.s().capture_error);
+                    self.mark_dirty();
+                }
+            }
         } else if let Some(w) = &self.capture_worker {
             if preset_changed {
-                // Drain events from the previous preset so they don't bleed into the new one.
-                w.drain_events();
-                // Reseed counts from the newly active preset.
-                w.set_counts(&counts);
-                self.worker_preset_index = current_preset;
+                let error = w.replace_config(self.make_worker_config(), &counts).err();
+                if let Some(error) = error {
+                    self.handle_worker_config_error(error);
+                } else {
+                    self.worker_preset_index = current_preset;
+                    self.worker_config_dirty = false;
+                }
+            } else if self.worker_config_dirty {
+                if let Err(error) = w.update_config(self.make_worker_config()) {
+                    self.handle_worker_config_error(error);
+                } else {
+                    self.worker_config_dirty = false;
+                }
             }
-            // Push updated config every frame — cheap Mutex write, worker picks it up.
-            w.update_config(self.make_worker_config());
         }
     }
 
@@ -301,7 +440,7 @@ impl ShinyApp {
             // Kill the worker when not sampling — avoids continuous screen capture
             // and the spinning cursor on macOS.
             if self.capture_worker.is_some() {
-                self.capture_worker = None;
+                self.stop_capture_worker_and_reconcile();
                 self.last_sample.clear();
             }
             ctx.request_repaint_after(Duration::from_millis(80));
@@ -327,18 +466,46 @@ impl ShinyApp {
             .map(|w| w.drain_events())
             .unwrap_or_default();
 
-        let mut any_incremented = false;
+        let (mut any_incremented, capture_error) = self.apply_sample_events(events);
+        if let Some(error) = capture_error {
+            let trailing_events = self
+                .capture_worker
+                .take()
+                .map(CaptureWorker::shutdown)
+                .unwrap_or_default();
+            let (trailing_incremented, trailing_error) = self.apply_sample_events(trailing_events);
+            any_incremented |= trailing_incremented;
+            self.running = false;
+            self.close_all_sessions();
+            self.last_sample.clear();
+            self.status = format!(
+                "{}: {}",
+                self.s().capture_error,
+                trailing_error.unwrap_or(error)
+            );
+            self.mark_dirty();
+        }
 
+        self.push_server_state();
+        if any_incremented {
+            self.write_output_file();
+        }
+    }
+
+    fn apply_sample_events(&mut self, events: Vec<SampleEvent>) -> (bool, Option<String>) {
+        let (events, capture_error) = partition_capture_errors(events);
+        let mut any_incremented = false;
         for evt in events {
             match evt {
                 SampleEvent::Incremented {
                     group_idx: gi,
                     new_count: count,
                 } => {
-                    // Sync persisted count from worker.
-                    if let Some(g) = self.active_mut().groups.get_mut(gi) {
-                        g.count = count;
+                    if gi >= self.active().groups.len() {
+                        continue;
                     }
+                    // Sync persisted count from worker.
+                    self.active_mut().groups[gi].count = count;
                     self.active_mut().count = self.active().total_count();
                     let gi_str = if self.active().groups.len() > 1 {
                         format!(" (Zone {})", gi + 1)
@@ -355,21 +522,30 @@ impl ShinyApp {
                         self.status = self.s().rearmed.into();
                     }
                 }
-                SampleEvent::CaptureError(e) => {
-                    self.status = format!("{}: {e}", self.s().capture_error);
-                    self.running = false;
-                    self.close_all_sessions();
-                    self.last_sample.clear();
-                    self.mark_dirty();
-                    return;
-                }
+                SampleEvent::CaptureError(_) => {}
             }
         }
+        (any_incremented, capture_error)
+    }
 
+    pub(super) fn stop_capture_worker_and_reconcile(&mut self) -> Option<String> {
+        let events = self
+            .capture_worker
+            .take()
+            .map(CaptureWorker::shutdown)
+            .unwrap_or_default();
+        let (any_incremented, capture_error) = self.apply_sample_events(events);
+        if let Some(error) = &capture_error {
+            self.running = false;
+            self.close_all_sessions();
+            self.status = format!("{}: {error}", self.s().capture_error);
+            self.mark_dirty();
+        }
         self.push_server_state();
         if any_incremented {
             self.write_output_file();
         }
+        capture_error
     }
 
     /// Push the current active preset's state to the HTTP overlay server and
@@ -421,7 +597,9 @@ impl ShinyApp {
         let now = epoch_now();
         let lang = self.config.language;
         let preset_idx = self.active_idx();
-        let group = &mut self.config.presets[preset_idx].groups[group_idx];
+        let Some(group) = self.config.presets[preset_idx].groups.get_mut(group_idx) else {
+            return;
+        };
         let need_open = group.sessions.last().map(|s| !s.is_open()).unwrap_or(true);
         if need_open {
             group.sessions.push(SessionRecord {
@@ -432,7 +610,9 @@ impl ShinyApp {
                 hits: Vec::new(),
             });
         }
-        let session = group.sessions.last_mut().expect("session pushed above");
+        let Some(session) = group.sessions.last_mut() else {
+            return;
+        };
         let prev = session
             .hits
             .last()
@@ -457,38 +637,13 @@ impl ShinyApp {
     pub(super) fn open_session(&mut self) {
         let now = epoch_now();
         let stamp = format_local_now(self.config.language);
-        let preset_idx = self.active_idx();
-        let gi = self.config.presets[preset_idx].active_group_index;
-        let group = &mut self.config.presets[preset_idx].groups[gi];
-        if let Some(last) = group.sessions.last_mut() {
-            if last.is_open() {
-                last.ended_at_epoch = Some(now);
-                last.ended_at = Some(stamp.clone());
-            }
-        }
-        group.sessions.push(SessionRecord {
-            started_at_epoch: now,
-            started_at: stamp,
-            ended_at_epoch: None,
-            ended_at: None,
-            hits: Vec::new(),
-        });
+        open_sessions(self.active_mut(), now, &stamp);
     }
 
     pub(super) fn close_session(&mut self) {
         let now = epoch_now();
         let stamp = format_local_now(self.config.language);
-        let preset_idx = self.active_idx();
-        let gi = self.config.presets[preset_idx].active_group_index;
-        if let Some(last) = self.config.presets[preset_idx].groups[gi]
-            .sessions
-            .last_mut()
-        {
-            if last.is_open() {
-                last.ended_at_epoch = Some(now);
-                last.ended_at = Some(stamp);
-            }
-        }
+        close_sessions(self.active_mut(), now, &stamp);
     }
 
     /// Close the open session in every group of the active preset.
@@ -496,15 +651,7 @@ impl ShinyApp {
     pub(super) fn close_all_sessions(&mut self) {
         let now = epoch_now();
         let stamp = format_local_now(self.config.language);
-        let preset_idx = self.active_idx();
-        for group in &mut self.config.presets[preset_idx].groups {
-            if let Some(last) = group.sessions.last_mut() {
-                if last.is_open() {
-                    last.ended_at_epoch = Some(now);
-                    last.ended_at = Some(stamp.clone());
-                }
-            }
-        }
+        close_sessions(self.active_mut(), now, &stamp);
     }
 
     pub(super) fn accent(&self) -> Color {
@@ -649,7 +796,7 @@ impl eframe::App for ShinyApp {
 
         match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => {
-                central.show_inside(ui, |ui| self.render_idle(&ctx, ui));
+                central.show(ui, |ui| self.render_idle(&ctx, ui));
             }
             Mode::Picking(session) => {
                 let session = self.render_picking(&ctx, ui, central, session);
@@ -664,6 +811,7 @@ impl eframe::App for ShinyApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.stop_capture_worker_and_reconcile();
         self.close_session();
         let _ = storage::save(&self.config);
     }
@@ -732,5 +880,101 @@ mod tests {
             .sessions
             .iter()
             .all(|s| !s.is_open()));
+    }
+
+    #[test]
+    fn watching_sessions_open_and_close_for_every_zone() {
+        let mut preset = Preset::new("Multi-zone");
+        preset
+            .groups
+            .push(shiny_counter::types::PickerGroup::new("Zone 2"));
+
+        open_sessions(&mut preset, 100, "start");
+        assert!(preset
+            .groups
+            .iter()
+            .all(|group| { group.sessions.len() == 1 && group.sessions[0].is_open() }));
+
+        close_sessions(&mut preset, 125, "end");
+        assert!(preset.groups.iter().all(|group| {
+            group.sessions[0].ended_at_epoch == Some(125)
+                && group.sessions[0].ended_at.as_deref() == Some("end")
+        }));
+    }
+
+    #[test]
+    fn a_new_zone_can_start_its_session_while_watching() {
+        let mut group = PickerGroup::new("Zone 2");
+
+        open_group_session(&mut group, 200, "created");
+
+        assert_eq!(group.sessions.len(), 1);
+        assert_eq!(group.sessions[0].started_at_epoch, 200);
+        assert!(group.sessions[0].is_open());
+    }
+
+    #[test]
+    fn removing_a_zone_recomputes_total_and_active_index() {
+        let mut preset = Preset::new("Multi-zone");
+        preset.groups[0].count = 3;
+        preset.groups.push(PickerGroup::new("Zone 2"));
+        preset.groups[1].count = 7;
+        preset.groups.push(PickerGroup::new("Zone 3"));
+        preset.groups[2].count = 11;
+        preset.active_group_index = 2;
+        preset.count = 21;
+
+        assert!(remove_picker_group(&mut preset, 1));
+
+        assert_eq!(preset.groups.len(), 2);
+        assert_eq!(preset.active_group_index, 1);
+        assert_eq!(preset.count, 14);
+    }
+
+    #[test]
+    fn removing_zones_keeps_the_same_logical_zone_selected() {
+        for (active, removed, expected) in [(1, 0, 0), (1, 1, 0), (1, 2, 1)] {
+            let mut preset = Preset::new("Multi-zone");
+            preset.groups.push(PickerGroup::new("Zone 2"));
+            preset.groups.push(PickerGroup::new("Zone 3"));
+            preset.active_group_index = active;
+
+            assert!(remove_picker_group(&mut preset, removed));
+            assert_eq!(
+                preset.active_group_index, expected,
+                "active={active}, removed={removed}"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_error_partition_keeps_increments_before_and_after_the_error() {
+        for events in [
+            vec![
+                SampleEvent::Incremented {
+                    group_idx: 0,
+                    new_count: 1,
+                },
+                SampleEvent::CaptureError("lost source".into()),
+            ],
+            vec![
+                SampleEvent::CaptureError("lost source".into()),
+                SampleEvent::Incremented {
+                    group_idx: 0,
+                    new_count: 1,
+                },
+            ],
+        ] {
+            let (events, error) = partition_capture_errors(events);
+
+            assert_eq!(error.as_deref(), Some("lost source"));
+            assert!(matches!(
+                events.as_slice(),
+                [SampleEvent::Incremented {
+                    group_idx: 0,
+                    new_count: 1
+                }]
+            ));
+        }
     }
 }

@@ -1,5 +1,5 @@
-use super::helpers::color_swatch;
-use super::state::{PendingConfirm, ShinyApp};
+use super::helpers::{color_swatch, epoch_now, format_local_now};
+use super::state::{open_group_session, PendingConfirm, ShinyApp};
 use crate::theme::{
     card, colored_button, ghost_button, icon_button, info_icon, pill, pill_dot, BAD, BORDER, GOOD,
     SURFACE_2, TEXT, TEXT_DIM, WARN,
@@ -56,20 +56,24 @@ impl ShinyApp {
                     (self.s().start_watching, GOOD, GOOD.linear_multiply(1.2))
                 };
                 if colored_button(ui, label, fill, stroke).clicked() {
-                    self.running = !self.running;
                     if self.running {
+                        let capture_error = self.stop_capture_worker_and_reconcile();
+                        self.running = false;
+                        self.close_session();
+                        // Drop the live sample so the per-row "match/differ" border
+                        // colour returns to neutral once watching has been stopped.
+                        self.last_sample.clear();
+                        if capture_error.is_none() {
+                            self.status = self.s().paused.into();
+                        }
+                    } else {
+                        self.running = true;
                         self.open_session();
                         self.status = format!(
                             "{} {:.2}s",
                             self.s().watching_msg,
                             self.active().interval_ms as f32 / 1000.0
                         );
-                    } else {
-                        self.close_session();
-                        // Drop the live sample so the per-row "match/differ" border
-                        // colour returns to neutral once watching has been stopped.
-                        self.last_sample.clear();
-                        self.status = self.s().paused.into();
                     }
                     self.mark_dirty();
                 }
@@ -199,7 +203,6 @@ impl ShinyApp {
 
         let mut switch_to: Option<usize> = None;
         let mut add_zone = false;
-        let mut remove_zone: Option<usize> = None;
 
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -265,7 +268,7 @@ impl ShinyApp {
                                 .min_size(egui::vec2(0.0, 28.0));
                         let x_resp = ui.add(x_btn).on_hover_text("Supprimer cette zone");
                         if x_resp.clicked() {
-                            remove_zone = Some(gi);
+                            self.pending_confirm = PendingConfirm::DeleteGroup(gi);
                         }
                     }
                 });
@@ -283,31 +286,20 @@ impl ShinyApp {
         if let Some(gi) = switch_to {
             self.active_mut().active_group_index = gi;
             self.sync_hex_buf();
-            self.sync_counters();
         }
         if add_zone {
             let n = self.active().groups.len();
-            self.active_mut()
-                .groups
-                .push(PickerGroup::new(format!("Zone {}", n + 1)));
+            let mut group = PickerGroup::new(format!("Zone {}", n + 1));
+            if self.running {
+                let now = epoch_now();
+                let stamp = format_local_now(self.config.language);
+                open_group_session(&mut group, now, &stamp);
+            }
+            self.active_mut().groups.push(group);
             self.active_mut().active_group_index = n;
-            self.sync_counters();
+            self.sync_added_group(n);
             self.sync_hex_buf();
             self.mark_dirty();
-        }
-        if let Some(gi) = remove_zone {
-            if self.active().groups.len() > 1 {
-                self.active_mut().groups.remove(gi);
-                let new_gi = gi.saturating_sub(1).min(self.active().groups.len() - 1);
-                self.active_mut().active_group_index = new_gi;
-                // Reseed worker counts in the correct order after the removal.
-                let counts: Vec<u32> = self.active().groups.iter().map(|g| g.count).collect();
-                if let Some(w) = &self.capture_worker {
-                    w.set_counts(&counts);
-                }
-                self.sync_hex_buf();
-                self.mark_dirty();
-            }
         }
     }
 

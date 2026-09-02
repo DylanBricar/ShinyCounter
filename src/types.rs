@@ -187,7 +187,25 @@ impl Preset {
 
     /// Total count across all groups (for display/server).
     pub fn total_count(&self) -> u32 {
-        self.groups.iter().map(|g| g.count).sum()
+        self.groups
+            .iter()
+            .fold(0, |total, group| total.saturating_add(group.count))
+    }
+
+    /// Clone detection settings for a new hunt without carrying mutable
+    /// progress, session history, or an output path shared with the source.
+    pub fn duplicate_for_new_hunt(&self) -> Self {
+        let mut copy = self.clone();
+        copy.count = 0;
+        copy.hits.clear();
+        copy.sessions.clear();
+        copy.output_file = None;
+        copy.output_file_enabled = false;
+        for group in &mut copy.groups {
+            group.count = 0;
+            group.sessions.clear();
+        }
+        copy
     }
 
     /// Migrate legacy `hits` field into a single archived session if needed.
@@ -350,5 +368,45 @@ impl Config {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         self.update_snoozes.retain(|s| s.until_epoch > now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn total_count_saturates_instead_of_overflowing() {
+        let mut preset = Preset::new("Overflow");
+        preset.groups[0].count = u32::MAX;
+        preset.groups.push(PickerGroup::new("Zone 2"));
+        preset.groups[1].count = 1;
+
+        assert_eq!(preset.total_count(), u32::MAX);
+    }
+
+    #[test]
+    fn duplicate_for_new_hunt_preserves_detection_but_resets_progress_and_output() {
+        let mut preset = Preset::new("Original");
+        preset.groups.push(PickerGroup::new("Zone 2"));
+        preset.groups[0].count = 12;
+        preset.groups[0].sessions.push(SessionRecord::default());
+        preset.count = 12;
+        preset.hits.push(HitRecord::default());
+        preset.sessions.push(SessionRecord::default());
+        preset.output_file = Some("counter.txt".into());
+        preset.output_file_enabled = true;
+
+        let copy = preset.duplicate_for_new_hunt();
+
+        assert_eq!(copy.groups.len(), 2);
+        assert_eq!(copy.groups[0].pickers.len(), preset.groups[0].pickers.len());
+        assert!(copy.groups.iter().all(|group| group.count == 0));
+        assert!(copy.groups.iter().all(|group| group.sessions.is_empty()));
+        assert_eq!(copy.count, 0);
+        assert!(copy.hits.is_empty());
+        assert!(copy.sessions.is_empty());
+        assert!(copy.output_file.is_none());
+        assert!(!copy.output_file_enabled);
     }
 }

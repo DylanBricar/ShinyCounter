@@ -1,19 +1,13 @@
 name: "Release"
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
-# Serialize release runs so the second one waits for the first to finish.
-# Without this, two concurrent workflows can both create drafts, race on the
-# tag bump, or - worse - have one's "clean up stale drafts" step delete the
-# release the other is still uploading assets to, which surfaces as a
-# 404 Not Found during the asset upload step.
+# Serialize manual releases so two runs cannot race while checking the package
+# version or publishing the same tag.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -22,16 +16,25 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
+      - name: Require the main branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases may only be dispatched from the main branch." >&2
+          exit 1
+
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: 1.98.0
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -70,81 +73,58 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: cargo test
-        run: cargo test --all
+        run: cargo test --all-targets --all-features --locked
 
-  create-release:
+      - name: RustSec audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  prepare-release:
     needs: validate
     runs-on: ubuntu-latest
     outputs:
-      release-id: ${{ steps.create-release.outputs.result }}
       version: ${{ steps.get-version.outputs.version }}
       tag: ${{ steps.get-version.outputs.tag }}
+      changelog: ${{ steps.changelog.outputs.result }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # Use the GITHUB_TOKEN so the subsequent `git push` of the new tag
-          # is authenticated.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Compute next version from existing git tags
+      - name: Read and validate the package version
         id: get-version
         shell: bash
         run: |
           set -euo pipefail
-          # Make sure we have every tag locally - checkout may only fetch
-          # the default branch refs.
-          git fetch --tags origin --prune --force || true
-          # Highest v*.*.* tag, sorted numerically across the three components.
-          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-            | sed 's/^v//' \
-            | sort -t. -k1,1n -k2,2n -k3,3n \
-            | tail -1 || true)
-          if [ -z "$LATEST" ]; then
-            NEXT="0.1.0"
-          else
-            MAJOR=$(echo "$LATEST" | cut -d. -f1)
-            MINOR=$(echo "$LATEST" | cut -d. -f2)
-            PATCH=$(echo "$LATEST" | cut -d. -f3)
-            NEXT="$MAJOR.$MINOR.$((PATCH+1))"
-          fi
-          echo "Latest tag: ${LATEST:-<none>}"
-          echo "Next version: $NEXT"
-          {
-            echo "version=$NEXT"
-            echo "tag=v$NEXT"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create and push the git tag
-        env:
-          TAG: ${{ steps.get-version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists locally - bumping logic was wrong" >&2
+          VERSION=$(sed -nE '/^\[package\]$/,/^\[/{s/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p;}' Cargo.toml | head -1)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Cargo.toml does not contain a valid package version" >&2
             exit 1
           fi
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; bump Cargo.toml before releasing" >&2
+            exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
-        uses: actions/github-script@v7
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9.0.0
         with:
           result-encoding: string
           script: |
             const version = '${{ steps.get-version.outputs.version }}';
-            // Only consider published releases (drafts were just deleted; we
-            // also defensively filter again so the diff link is stable).
+            // Only consider published stable releases so the diff link is stable.
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -158,7 +138,7 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   base: prevTag,
-                  head: 'main',
+                  head: context.sha,
                 });
                 commits = comparison.commits.map(c => c.commit.message.split('\n')[0]);
               } catch (e) {
@@ -194,31 +174,8 @@ jobs:
             }
             return body;
 
-      - name: Create Draft Release
-        id: create-release
-        uses: actions/github-script@v7
-        env:
-          RELEASE_VERSION: ${{ steps.get-version.outputs.version }}
-          RELEASE_TAG: ${{ steps.get-version.outputs.tag }}
-          RELEASE_BODY: ${{ steps.changelog.outputs.result }}
-        with:
-          script: |
-            const version = process.env.RELEASE_VERSION;
-            const tag = process.env.RELEASE_TAG;
-            const body = process.env.RELEASE_BODY;
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `Shiny Counter ${tag}`,
-              body,
-              draft: true,
-              prerelease: false,
-            });
-            return data.id;
-
   build:
-    needs: create-release
+    needs: prepare-release
     strategy:
       fail-fast: false
       matrix:
@@ -261,36 +218,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Build the exact commit the tag points to, not whatever happens to
           # be at HEAD when the matrix gets dispatched.
-          ref: ${{ needs.create-release.outputs.tag }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
-
-      - name: Sync Cargo.toml version with the release tag
-        uses: actions/github-script@v7
-        env:
-          VERSION: ${{ needs.create-release.outputs.version }}
-        with:
-          script: |
-            const fs = require('fs');
-            const v = process.env.VERSION;
-            const file = 'Cargo.toml';
-            const original = fs.readFileSync(file, 'utf8');
-            // Replace only the first `version = "..."` line - that's the
-            // [package] one. We don't want to touch any dep version.
-            const updated = original.replace(/^version = "[^"]*"/m, `version = "${v}"`);
-            fs.writeFileSync(file, updated);
-            core.info(`Cargo.toml version set to ${v}`);
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: 1.98.0
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -328,16 +271,13 @@ jobs:
 
       - name: Build release binary
         shell: bash
-        # Not using `--locked` because the version sync step above just
-        # bumped Cargo.toml; cargo regenerates the lock against the new
-        # package version on first build.
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage artifact (Unix tarball - binary only)
         if: matrix.archive_kind == 'tar'
         shell: bash
         env:
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
           SRC: ${{ matrix.artifact_glob }}
           OUT: ${{ matrix.asset_name }}
         run: |
@@ -357,7 +297,7 @@ jobs:
         if: matrix.archive_kind == 'exe'
         shell: pwsh
         env:
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
           SRC: ${{ matrix.artifact_glob }}
           OUT: ${{ matrix.asset_name }}
         run: |
@@ -372,7 +312,7 @@ jobs:
         if: matrix.archive_kind == 'macapp'
         shell: bash
         env:
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
           SRC: ${{ matrix.artifact_glob }}
           OUT: ${{ matrix.asset_name }}
           TARGET: ${{ matrix.target }}
@@ -438,15 +378,15 @@ jobs:
           </plist>
           EOF
 
-          # Write entitlements — required for Screen Recording permission on macOS 10.15+.
-          # Without these, Gatekeeper rejects the app as "damaged" even with a valid signature.
+          # Keep the hardened runtime at its strict defaults. Screen Recording
+          # consent is driven by NSScreenCaptureUsageDescription above and does
+          # not require disabling library validation.
           printf '%s\n' \
             '<?xml version="1.0" encoding="UTF-8"?>' \
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
             '<plist version="1.0"><dict>' \
             '  <key>com.apple.security.cs.allow-jit</key><false/>' \
             '  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><false/>' \
-            '  <key>com.apple.security.cs.disable-library-validation</key><true/>' \
             '  <key>com.apple.security.cs.allow-dyld-environment-variables</key><false/>' \
             '</dict></plist>' \
             > entitlements.plist
@@ -494,33 +434,103 @@ jobs:
           echo "ASSET_PATH=$OUT_NAME" >> "$GITHUB_ENV"
           echo "ASSET_NAME=$OUT_NAME" >> "$GITHUB_ENV"
 
-      - name: Upload asset to release
-        uses: actions/github-script@v7
+      - name: Store release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.name }}
+          path: ${{ env.ASSET_PATH }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [prepare-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ShinyCounter-* > SHA256SUMS
+
+      - name: Attest release build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Create and publish release
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9.0.0
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          RELEASE_BODY: ${{ needs.prepare-release.outputs.changelog }}
         with:
           script: |
             const fs = require('fs');
-            const path = process.env.ASSET_PATH;
-            const name = process.env.ASSET_NAME;
-            const data = fs.readFileSync(path);
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release-id }},
-              name,
-              data,
-            });
+            const path = require('path');
+            const version = process.env.RELEASE_VERSION;
+            const tag = process.env.RELEASE_TAG;
+            let release;
+            try {
+              ({ data: release } = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: `Shiny Counter ${tag}`,
+                body: process.env.RELEASE_BODY,
+                draft: true,
+                prerelease: false,
+              }));
 
-  publish:
-    needs: [create-release, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Publish release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release-id }},
-              draft: false,
-            });
+              const files = fs.readdirSync('dist').sort();
+              if (files.length === 0) throw new Error('No release assets were downloaded');
+              for (const name of files) {
+                const assetPath = path.join('dist', name);
+                if (!fs.statSync(assetPath).isFile()) continue;
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.id,
+                  name,
+                  data: fs.readFileSync(assetPath),
+                });
+              }
+
+              await github.rest.repos.updateRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                draft: false,
+              });
+              core.info(`Published Shiny Counter ${version} from ${context.sha}`);
+            } catch (error) {
+              if (release) {
+                try {
+                  await github.rest.repos.deleteRelease({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    release_id: release.id,
+                  });
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `tags/${tag}`,
+                  });
+                } catch (cleanupError) {
+                  core.warning(`Release cleanup failed: ${cleanupError.message}`);
+                }
+              }
+              throw error;
+            }
