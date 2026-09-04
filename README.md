@@ -210,12 +210,13 @@ Copy it between machines, back it up, or delete it to start fresh.
 
 ## Build & release pipeline
 
-Releases are started explicitly from the
-[release workflow](.github/workflows/release.yml) after bumping the package
-version in `Cargo.toml`:
+Releases start automatically when a new package version in `Cargo.toml` reaches
+`main`. The [release workflow](.github/workflows/release.yml) can also be started
+manually as a recovery path. If the version tag already exists, the workflow
+finishes successfully without publishing a duplicate:
 
 1. Validates the exact commit with formatting, Clippy, tests and RustSec.
-2. Rejects an invalid or already published package version.
+2. Rejects an invalid package version and skips an already published version.
 3. Generates a Conventional-Commits style changelog.
 4. Builds matrix targets (Linux x86_64 / aarch64, Windows x86_64, macOS
    x86_64 / Apple Silicon).
