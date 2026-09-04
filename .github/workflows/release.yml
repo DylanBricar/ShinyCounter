@@ -1,27 +1,70 @@
 name: "Release"
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Serialize manual releases so two runs cannot race while checking the package
-# version or publishing the same tag.
+# Serialize automatic and manual releases so two runs cannot race while checking
+# the package version or publishing the same tag.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  validate:
-    runs-on: ubuntu-24.04
+  release-info:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Require the main branch
         if: github.ref != 'refs/heads/main'
         run: |
-          echo "Releases may only be dispatched from the main branch." >&2
+          echo "Releases may only run from the main branch." >&2
           exit 1
 
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect an unpublished package version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -nE '/^\[package\]$/,/^\[/{s/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p;}' Cargo.toml | head -1)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Cargo.toml does not contain a valid package version" >&2
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+          SHOULD_RELEASE=true
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            SHOULD_RELEASE=false
+            echo "Version $VERSION is already published; no release is required."
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "should_release=$SHOULD_RELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: release-info
+    if: needs.release-info.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,7 +127,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   prepare-release:
-    needs: validate
+    needs: [release-info, validate]
+    if: needs.release-info.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
