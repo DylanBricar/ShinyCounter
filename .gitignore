@@ -1,8 +1,16 @@
 /target
 Cargo.lock.bak
+**/*.rs.bk
 *.swp
 *.log
+*.tmp
+*.bak
+.env
+.env.*
+!.env.example
 .DS_Store
+Thumbs.db
+Desktop.ini
 .vscode/
 .idea/
 
