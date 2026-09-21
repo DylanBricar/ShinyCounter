@@ -75,7 +75,7 @@ jobs:
 
       - name: Install cargo-llvm-cov
         if: runner.os == 'Linux'
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: cargo-llvm-cov
 
