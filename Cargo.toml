@@ -16,7 +16,7 @@ name = "shiny_counter"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.36.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.36.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 xcap = "0.9.8"
