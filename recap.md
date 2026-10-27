@@ -55,6 +55,12 @@ l'historique Git. Version applicative conservée : 0.1.12.
 
 ## Publication et suite
 
+- Le push direct a été refusé par les règles GitHub : PR obligatoire, historique
+  linéaire et 4 contrôles requis (Linux, Windows, macOS, Rust minimum 1.95).
+  Le travail consolidé est commité et publié sur
+  `chore/consolidate-handoff-2026-10-27` pour une PR avec fusion squash normale.
+  Il n'est pas encore intégré dans le `main` distant. Conserver les branches
+  Dependabot tant que cette fusion n'a pas abouti et été vérifiée.
 - La version n'a pas été incrémentée. Le tag distant `v0.1.12` existe déjà.
   Le workflow Release, déclenché par une modification de Cargo.toml sur main,
   constate ce tag et garde `should_release=false` : aucune nouvelle version
