@@ -75,6 +75,15 @@ l'historique Git. Version applicative conservée : 0.1.12.
 - La CI exacte doit être distinguée des résultats locaux ; les autres dépôts
   du même compte ont actuellement leurs jobs bloqués par la facturation/plafond.
   Vérifier le run du SHA publié avant de déclarer la matrice CI réussie.
+- La PR 24 a été fusionnée après ses quatre contrôles verts, avec équivalence
+  complète des arbres vérifiée ; les huit branches Dependabot ont été supprimées.
+  La CI du main `6334b41` a ensuite passé Windows, macOS et Rust minimum, mais
+  l'action RustSec a échoué en créant son compte rendu GitHub : son audit indiquait
+  zéro vulnérabilité et les trois avertissements de maintenance déjà connus.
+  Le correctif ajoute seulement `checks: write` au job qui publie ce résultat,
+  en conservant `contents: read`, les quatre contrôles requis et l'audit intégral.
+  Aucun droit d'écriture d'issues ni exception d'audit n'est ajouté. La documentation
+  de l'action décrit ce droit dans sa section [Granular Permissions](https://github.com/rustsec/audit-check/blob/69366f33c96575abad1ee0dba8212993eecbe998/README.md#granular-permissions).
 
 Sauvegardes et journaux :
 `C:\Users\YourTech\Documents\Codex\cleanup-2026-10-27\extensions\ShinyCounter`.
