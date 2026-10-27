@@ -42,7 +42,7 @@ impl ShinyApp {
         };
 
         // Dark backdrop that captures clicks so the rest of the UI is "inert".
-        let backdrop_id = egui::Id::new("modal_backdrop");
+        let backdrop_id = egui::Id::unique("modal_backdrop");
         egui::Area::new(backdrop_id)
             .order(egui::Order::Middle)
             .fixed_pos(egui::pos2(0.0, 0.0))
@@ -63,7 +63,7 @@ impl ShinyApp {
         let mut confirmed = false;
         let mut cancelled = false;
         egui::Window::new(title)
-            .id(egui::Id::new("confirm_modal_window"))
+            .id(egui::Id::unique("confirm_modal_window"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .collapsible(false)
@@ -238,7 +238,7 @@ impl ShinyApp {
         }
 
         // Backdrop
-        let backdrop_id = egui::Id::new("update_backdrop");
+        let backdrop_id = egui::Id::unique("update_backdrop");
         egui::Area::new(backdrop_id)
             .order(egui::Order::Middle)
             .fixed_pos(egui::pos2(0.0, 0.0))
@@ -263,7 +263,7 @@ impl ShinyApp {
         let mut action_close = false;
 
         egui::Window::new("update_modal")
-            .id(egui::Id::new("update_modal_window"))
+            .id(egui::Id::unique("update_modal_window"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .collapsible(false)
